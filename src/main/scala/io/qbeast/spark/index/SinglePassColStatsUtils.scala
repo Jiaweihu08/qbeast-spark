@@ -41,10 +41,12 @@ object SinglePassColStatsUtils {
       stats
     } else {
       val value = stats.dType match {
-        case "DoubleDataType" | "DecimalDataType" => row.getAs[Double](stats.colName)
+        case "DoubleDataType" => row.getAs[Double](stats.colName)
         case "IntegerDataType" => row.getAs[Int](stats.colName).asInstanceOf[Double]
         case "FloatDataType" => row.getAs[Float](stats.colName).asInstanceOf[Double]
         case "LongDataType" => row.getAs[Long](stats.colName).asInstanceOf[Double]
+        case "DecimalDataType" =>
+          row.getDecimal(row.schema.fieldIndex(stats.colName)).doubleValue()
       }
       stats.copy(min = stats.min.min(value), max = stats.max.max(value))
     }
