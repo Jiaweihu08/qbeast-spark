@@ -42,9 +42,9 @@ object SinglePassColStatsUtils {
     } else {
       val value = stats.dType match {
         case "DoubleDataType" => row.getAs[Double](stats.colName)
-        case "IntegerDataType" => row.getAs[Int](stats.colName).asInstanceOf[Double]
-        case "FloatDataType" => row.getAs[Float](stats.colName).asInstanceOf[Double]
-        case "LongDataType" => row.getAs[Long](stats.colName).asInstanceOf[Double]
+        case "IntegerDataType" => row.getAs[Int](stats.colName)
+        case "FloatDataType" => row.getAs[Float](stats.colName)
+        case "LongDataType" => row.getAs[Long](stats.colName)
         case "DecimalDataType" =>
           row.getDecimal(row.schema.fieldIndex(stats.colName)).doubleValue()
       }
