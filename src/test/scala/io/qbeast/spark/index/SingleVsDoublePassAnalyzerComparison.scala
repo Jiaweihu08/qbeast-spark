@@ -19,6 +19,9 @@ class SingleVsDoublePassAnalyzerComparison extends QbeastIntegrationTestSpec {
         .option("columnsToIndex", "event_time,user_id,price")
         .option("cubeSize", 5000)
         .save(tmpDir)
+
+      val qdf = spark.read.format("qbeast").load(tmpDir)
+      df.count() shouldBe qdf.count()
     }
   }
 }
