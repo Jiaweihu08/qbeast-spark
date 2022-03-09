@@ -84,3 +84,5 @@ case class CubeWeightAndStats(
     cubeBytes: Array[Byte],
     normalizedWeight: NormalizedWeight,
     colStats: Seq[ColStats])
+
+case class CubeAndOverlap(cubeBytes: Array[Byte], overlap: Double)
