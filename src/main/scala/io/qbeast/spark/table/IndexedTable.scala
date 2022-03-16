@@ -215,7 +215,7 @@ private[table] class IndexedTableImpl(
     val schema = data.schema
     metadataManager.updateWithTransaction(tableID, schema, append) {
       val (qbeastData, tableChanges) =
-        indexManager.index(data, indexStatus)
+        indexManager.index(data, indexStatus, "double")
       val fileActions = dataWriter.write(tableID, schema, qbeastData, tableChanges)
       (tableChanges, fileActions)
     }
@@ -248,7 +248,7 @@ private[table] class IndexedTableImpl(
             indexStatus.revision,
             QbeastColumns.cubeToReplicateColumnName)
         val (qbeastData, tableChanges) =
-          indexManager.optimize(dataToReplicate, indexStatus)
+          indexManager.optimize(dataToReplicate, indexStatus, "double")
         val fileActions =
           dataWriter.write(tableID, schema, qbeastData, tableChanges)
         (tableChanges, fileActions)

@@ -5,7 +5,7 @@ package io.qbeast.spark.index
 
 import io.qbeast.IISeq
 import io.qbeast.core.model._
-import org.apache.spark.sql.DataFrame
+import org.apache.spark.sql.{AnalysisExceptionFactory, DataFrame}
 
 /**
  * Implementation of OTreeAlgorithm.
@@ -18,8 +18,11 @@ object SparkOTreeManager extends IndexManager[DataFrame] with Serializable {
    * @param indexStatus the current status of the index
    * @return the changes to the index
    */
-  override def index(data: DataFrame, indexStatus: IndexStatus): (DataFrame, TableChanges) =
-    index(data, indexStatus, isReplication = false)
+  override def index(
+      data: DataFrame,
+      indexStatus: IndexStatus,
+      analyzerImp: String): (DataFrame, TableChanges) =
+    index(data, indexStatus, isReplication = false, analyzerImp = "double")
 
   /**
    * Optimizes the index
@@ -27,8 +30,11 @@ object SparkOTreeManager extends IndexManager[DataFrame] with Serializable {
    * @param indexStatus the current status of the index
    * @return the changes to the index
    */
-  override def optimize(data: DataFrame, indexStatus: IndexStatus): (DataFrame, TableChanges) =
-    index(data, indexStatus, isReplication = true)
+  override def optimize(
+      data: DataFrame,
+      indexStatus: IndexStatus,
+      analyzerImp: String): (DataFrame, TableChanges) =
+    index(data, indexStatus, isReplication = true, analyzerImp)
 
   /**
    * Analyzes the index
@@ -61,18 +67,24 @@ object SparkOTreeManager extends IndexManager[DataFrame] with Serializable {
   private def index(
       dataFrame: DataFrame,
       indexStatus: IndexStatus,
-      isReplication: Boolean): (DataFrame, TableChanges) = {
-    // Analyze the data and compute weight and estimated weight map of the result
-    val (weightedDataFrame, tc) =
-      DoublePassOTreeDataAnalyzer.analyze(dataFrame, indexStatus, isReplication)
+      isReplication: Boolean,
+      analyzerImp: String): (DataFrame, TableChanges) = analyzerImp match {
+    case "sequential" => SequentialDataAnalyzer.analyze(dataFrame, indexStatus, isReplication)
+    case "double" =>
+      // Analyze the data and compute weight and estimated weight map of the result
+      val (weightedDataFrame, tc) =
+        DoublePassOTreeDataAnalyzer.analyze(dataFrame, indexStatus, isReplication)
 
-    val pointWeightIndexer = new SparkPointWeightIndexer(tc, isReplication)
+      val pointWeightIndexer = new SparkPointWeightIndexer(tc, isReplication)
 
-    // Add cube and state information to the dataframe
-    val indexedDataFrame =
-      weightedDataFrame.transform(pointWeightIndexer.buildIndex)
+      // Add cube and state information to the dataframe
+      val indexedDataFrame =
+        weightedDataFrame.transform(pointWeightIndexer.buildIndex)
 
-    (indexedDataFrame, tc)
+      (indexedDataFrame, tc)
+    case _ =>
+      throw AnalysisExceptionFactory.create(
+        s"Analyzer Implementation: $analyzerImp not supported.")
   }
 
 }

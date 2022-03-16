@@ -14,7 +14,7 @@ trait IndexManager[DATA] {
    * @param indexStatus the current index status
    * @return the changes of the index and reorganization of data
    */
-  def index(data: DATA, indexStatus: IndexStatus): (DATA, TableChanges)
+  def index(data: DATA, indexStatus: IndexStatus, analyzerImp: String): (DATA, TableChanges)
 
   /**
    * Optimizes the index
@@ -22,7 +22,7 @@ trait IndexManager[DATA] {
    * @param indexStatus the current index status
    * @return the changes on the index and reorganization of data
    */
-  def optimize(data: DATA, indexStatus: IndexStatus): (DATA, TableChanges)
+  def optimize(data: DATA, indexStatus: IndexStatus, analyzerImp: String): (DATA, TableChanges)
 
   /**
    * Analyzes the current index status
