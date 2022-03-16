@@ -30,7 +30,7 @@ class SparkDataWriterTest extends QbeastIntegrationTestSpec {
       Map("columnsToIndex" -> "age,val2", "cubeSize" -> cubeSize.toString)
     val indexStatus =
       IndexStatus(SparkRevisionFactory.createNewRevision(tableID, df.schema, parameters))
-    val (qbeastData, tableChanges) = SparkOTreeManager.index(df, indexStatus)
+    val (qbeastData, tableChanges) = SparkOTreeManager.index(df, indexStatus, "double")
 
     (tableID, df.schema, qbeastData, tableChanges)
   }
