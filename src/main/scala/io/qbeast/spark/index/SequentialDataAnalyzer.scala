@@ -1,6 +1,6 @@
 package io.qbeast.spark.index
 
-import io.qbeast.core.model._
+import io.qbeast.core.model.{BroadcastedTableChanges, CubeId, _}
 import io.qbeast.spark.index.DoublePassOTreeDataAnalyzer.{
   addRandomWeight,
   calculateRevisionChanges,
@@ -9,6 +9,7 @@ import io.qbeast.spark.index.DoublePassOTreeDataAnalyzer.{
 import io.qbeast.spark.index.QbeastColumns.{cubeColumnName, weightColumnName}
 import org.apache.spark.sql.expressions.{UserDefinedFunction, Window}
 import org.apache.spark.sql.functions._
+import org.apache.spark.sql.types.{BinaryType, StructField}
 import org.apache.spark.sql.{DataFrame, Dataset, Row, SparkSession}
 
 import scala.annotation.tailrec
@@ -44,52 +45,73 @@ object SequentialDataAnalyzer extends OTreeDataAnalyzer with Serializable {
         pointCubeMapper.findTargetCubeUDF(struct(columnsToIndex.map(col): _*)))
     }
 
+  val cubeStringToBytes: UserDefinedFunction = {
+    udf((levelCube: String, dimensionCount: Int) => CubeId(dimensionCount, levelCube).bytes)
+  }
+
   @tailrec
   private[index] def generateOTreeIndex(
-      data: DataFrame,
+      remainingData: DataFrame,
       desiredCubeSize: Int,
-      level: Int,
-      cubeMaxLen: Double,
       dimensionCount: Int,
-      cubeWeights: Dataset[CubeNormalizedWeight],
-      processedData: DataFrame): (DataFrame, Dataset[CubeNormalizedWeight]) = {
+      treeHeight: Int,
+      level: Int,
+      indexedData: DataFrame,
+      cubeWeights: Dataset[(CubeId, NormalizedWeight)] =
+        spark.emptyDataset[(CubeId, NormalizedWeight)])
+      : (DataFrame, Dataset[(CubeId, NormalizedWeight)]) = {
 
-    if (level == 0 || data.isEmpty) {
-      return (processedData, cubeWeights)
-    }
+    val levelCubeString: UserDefinedFunction =
+      udf((cube: String) => cube.substring(0, level))
 
-    val cubeStringLengthFromLevel: Int = math.pow(2, level).toInt
+    val levelElemWindowSpec = Window.partitionBy("levelCube").orderBy(weightColumnName)
+    val dataWithPositionInPayload = remainingData
+      .withColumn("levelCube", levelCubeString(col(cubeColumnName)))
+      .withColumn("elemPosInPayload", rank.over(levelElemWindowSpec))
 
-    val cubeFromLevel: UserDefinedFunction =
-      udf((cube: String) => cube.substring(0, cubeStringLengthFromLevel))
-
-    val levelElemWindowSpec = Window.partitionBy(cubeColumnName).orderBy(weightColumnName)
-    val levelElems = data
-      .withColumn("cubeFromLevel", cubeFromLevel(col(cubeColumnName)))
-      .withColumn("rank", rank.over(levelElemWindowSpec))
-      .where(s"rank <= $desiredCubeSize")
+    val levelElems = dataWithPositionInPayload
+      .where(s"elemPosInPayload <= $desiredCubeSize")
+      .drop(cubeColumnName)
+      .drop("elemPosInPayload")
 
     val levelCubeWeightsWindowSpec =
-      Window.partitionBy("cubeFromLevel").orderBy(desc(weightColumnName))
+      Window.partitionBy("levelCube").orderBy(desc(weightColumnName))
     val levelCubeWeights = levelElems
-      .select("cubeFromLevel", weightColumnName)
-      .withColumn("rank", rank.over(levelCubeWeightsWindowSpec))
-      .where("rank == 1")
+      .select("levelCube", weightColumnName)
+      .withColumn("weightRank", rank.over(levelCubeWeightsWindowSpec))
+      .where("weightRank == 1")
       .map { row =>
-        val cubeString = row.getAs[String]("cubeFromLevel")
-        val cubeBytes = CubeId(dimensionCount, cubeString).bytes
-        val weight = Weight(row.getAs[Double](weightColumnName))
-        CubeNormalizedWeight(cubeBytes, NormalizedWeight(weight))
+        val cube = CubeId(dimensionCount, row.getAs[String]("levelCube"))
+        val weight = Weight(row.getAs[Int](weightColumnName))
+        (cube, NormalizedWeight(weight))
       }
 
-    generateOTreeIndex(
-      data,
-      desiredCubeSize,
-      level - 1,
-      cubeMaxLen,
-      dimensionCount,
-      cubeWeights.union(levelCubeWeights),
-      processedData.union(levelElems))
+    val levelElemsWithCubeBytes = levelElems
+      .withColumn(cubeColumnName, cubeStringToBytes(col("levelCube"), lit(dimensionCount)))
+      .drop("levelCube")
+      .drop(weightColumnName)
+
+    val nextIndexedData = indexedData.union(levelElemsWithCubeBytes)
+    val nextCubeWeights = cubeWeights.union(levelCubeWeights)
+
+    val nextIterData =
+      dataWithPositionInPayload
+        .where(s"elemPosInPayload > $desiredCubeSize")
+        .drop("levelCube")
+        .drop("elemPosInPayload")
+
+    if (nextIterData.isEmpty || level >= treeHeight) {
+      (nextIndexedData, nextCubeWeights)
+    } else {
+      generateOTreeIndex(
+        nextIterData,
+        desiredCubeSize,
+        dimensionCount,
+        treeHeight,
+        level + 1,
+        nextIndexedData,
+        nextCubeWeights)
+    }
   }
 
   /**
@@ -125,22 +147,33 @@ object SequentialDataAnalyzer extends OTreeDataAnalyzer with Serializable {
     }
 
     val dimensionCount = revision.columnTransformers.size
-    val maxOTreeDepth = calculateTreeDepth(numElements, revision.desiredCubeSize, dimensionCount)
-    val cubeMaxLength = (math.pow(2, dimensionCount) * maxOTreeDepth).toInt
+    val maxOTreeHeight = calculateTreeDepth(numElements, revision.desiredCubeSize, dimensionCount)
 
     val dataWithWeightAndCube =
-      dataFrame.transform(addRandomWeight(revision)).transform(addCubeId(revision, cubeMaxLength))
+      dataFrame
+        .transform(addRandomWeight(revision))
+        .transform(addCubeId(revision, maxOTreeHeight))
+    val dfSchema = dataFrame.schema.add(StructField(cubeColumnName, BinaryType, nullable = true))
+    val indexedData = spark.createDataFrame(spark.sparkContext.emptyRDD[Row], dfSchema)
 
-    val (outputData, _) = generateOTreeIndex(
+    val (outputData, cubeWeightsDS) = generateOTreeIndex(
       dataWithWeightAndCube,
       revision.desiredCubeSize,
-      cubeMaxLength,
-      cubeMaxLength,
       dimensionCount,
-      spark.emptyDataset[CubeNormalizedWeight],
-      spark.emptyDataFrame)
+      maxOTreeHeight,
+      0,
+      indexedData)
 
-    (outputData, BroadcastedTableChanges(None, indexStatus, Map.empty))
+    val cubeWeights = cubeWeightsDS.collect().toMap
+
+    val tableChanges = BroadcastedTableChanges(
+      spaceChanges,
+      indexStatus,
+      cubeWeights,
+      if (isReplication) indexStatus.cubesToOptimize
+      else Set.empty[CubeId])
+
+    (outputData, tableChanges)
   }
 
 }
