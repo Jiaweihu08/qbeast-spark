@@ -161,8 +161,8 @@ private[table] class IndexedTableImpl(
     if (exists && append) {
       checkColumnsToMatchSchema(indexStatus)
     }
+    val relation = write(data, indexStatus, append, parameters.getOrElse("analyzerImp", "double"))
 
-    val relation = write(data, indexStatus, append)
     relation
   }
 
@@ -194,28 +194,36 @@ private[table] class IndexedTableImpl(
     QbeastBaseRelation.forDeltaTable(tableID)
   }
 
-  private def write(data: DataFrame, indexStatus: IndexStatus, append: Boolean): BaseRelation = {
+  private def write(
+      data: DataFrame,
+      indexStatus: IndexStatus,
+      append: Boolean,
+      analyzerImp: String): BaseRelation = {
     val revision = indexStatus.revision
 
     if (exists) {
       keeper.withWrite(indexStatus.revision.tableID, revision.revisionID) { write =>
         val announcedSet = write.announcedCubes
         val updatedStatus = indexStatus.addAnnouncements(announcedSet)
-        doWrite(data, updatedStatus, append)
+        doWrite(data, updatedStatus, append, analyzerImp)
       }
     } else {
-      doWrite(data, indexStatus, append)
+      doWrite(data, indexStatus, append, analyzerImp)
     }
     clearCaches()
     createQbeastBaseRelation()
   }
 
-  private def doWrite(data: DataFrame, indexStatus: IndexStatus, append: Boolean): Unit = {
+  private def doWrite(
+      data: DataFrame,
+      indexStatus: IndexStatus,
+      append: Boolean,
+      analyzerImp: String): Unit = {
 
     val schema = data.schema
     metadataManager.updateWithTransaction(tableID, schema, append) {
       val (qbeastData, tableChanges) =
-        indexManager.index(data, indexStatus, "double")
+        indexManager.index(data, indexStatus, analyzerImp)
       val fileActions = dataWriter.write(tableID, schema, qbeastData, tableChanges)
       (tableChanges, fileActions)
     }
