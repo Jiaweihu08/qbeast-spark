@@ -71,10 +71,13 @@ object SparkOTreeManager extends IndexManager[DataFrame] with Serializable {
       analyzerImp: String): (DataFrame, TableChanges) = analyzerImp.toLowerCase() match {
     case "sequential" =>
       SequentialDataAnalyzer.analyze(dataFrame, indexStatus, isReplication)
-    case "double" =>
+
+    case imp @ ("double" | "single") =>
+      val analyzer: OTreeDataAnalyzer =
+        if (imp == "double") DoublePassOTreeDataAnalyzer else SinglePassOTreeDataAnalyzer
       // Analyze the data and compute weight and estimated weight map of the result
       val (weightedDataFrame, tc) =
-        DoublePassOTreeDataAnalyzer.analyze(dataFrame, indexStatus, isReplication)
+        analyzer.analyze(dataFrame, indexStatus, isReplication)
 
       val pointWeightIndexer = new SparkPointWeightIndexer(tc, isReplication)
 
@@ -83,6 +86,7 @@ object SparkOTreeManager extends IndexManager[DataFrame] with Serializable {
         weightedDataFrame.transform(pointWeightIndexer.buildIndex)
 
       (indexedDataFrame, tc)
+
     case _ =>
       throw AnalysisExceptionFactory.create(
         s"Analyzer Implementation: $analyzerImp not supported.")
