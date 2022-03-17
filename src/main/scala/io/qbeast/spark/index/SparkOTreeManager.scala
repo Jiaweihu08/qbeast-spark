@@ -22,7 +22,7 @@ object SparkOTreeManager extends IndexManager[DataFrame] with Serializable {
       data: DataFrame,
       indexStatus: IndexStatus,
       analyzerImp: String): (DataFrame, TableChanges) =
-    index(data, indexStatus, isReplication = false, analyzerImp = "double")
+    index(data, indexStatus, isReplication = false, analyzerImp)
 
   /**
    * Optimizes the index
@@ -68,8 +68,9 @@ object SparkOTreeManager extends IndexManager[DataFrame] with Serializable {
       dataFrame: DataFrame,
       indexStatus: IndexStatus,
       isReplication: Boolean,
-      analyzerImp: String): (DataFrame, TableChanges) = analyzerImp match {
-    case "sequential" => SequentialDataAnalyzer.analyze(dataFrame, indexStatus, isReplication)
+      analyzerImp: String): (DataFrame, TableChanges) = analyzerImp.toLowerCase() match {
+    case "sequential" =>
+      SequentialDataAnalyzer.analyze(dataFrame, indexStatus, isReplication)
     case "double" =>
       // Analyze the data and compute weight and estimated weight map of the result
       val (weightedDataFrame, tc) =
