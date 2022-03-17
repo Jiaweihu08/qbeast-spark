@@ -39,13 +39,13 @@ class SequentialAnalyzerTest extends QbeastIntegrationTestSpec {
   }
 
   it should "analyze data correctly" in withSpark { spark =>
-    val data = createDF(100000, spark)
+    val data = createDF(10000, spark)
     val columnTransformers = createTransformers(data.schema)
 
     val df = data.toDF()
 
     val emptyRevision =
-      Revision(0, 1000, QTableID("test"), 10000, columnTransformers, Seq.empty.toIndexedSeq)
+      Revision(0, 1000, QTableID("test"), 1000, columnTransformers, Seq.empty.toIndexedSeq)
 
     val dataFrameStats = getDataFrameStats(data.toDF(), columnTransformers)
     val revision =
@@ -85,5 +85,41 @@ class SequentialAnalyzerTest extends QbeastIntegrationTestSpec {
     cubeIdsFromData.size shouldBe cubeWeightsMap.size
     cubeWeights.length shouldBe cubeWeightsMap.size
     cubeIdsFromData.forall(c => cubeWeightsMap.contains(c))
+  }
+
+  it should "write data 100k ecommerce data using sequential implementation" in withSparkAndTmpDir {
+    (spark, tmpDir) =>
+      val path = "./src/test/resources/ecommerce100k_2019_Oct.csv"
+      val df =
+        spark.read
+          .format("csv")
+          .option("header", true)
+          .option("inferSchema", true)
+          .load(path)
+
+      df.write
+        .format("qbeast")
+        .option("columnsToIndex", "event_time,user_id,price")
+        .option("cubeSize", 50000)
+        .option("analyzerImp", "sequential")
+        .save(tmpDir)
+  }
+
+  it should "write data 300k ecommerce data using sequential implementation" in withSparkAndTmpDir {
+    (spark, tmpDir) =>
+      val path = "./src/test/resources/ecommerce300k_2019_Nov.csv"
+      val df =
+        spark.read
+          .format("csv")
+          .option("header", true)
+          .option("inferSchema", true)
+          .load(path)
+
+      df.write
+        .format("qbeast")
+        .option("columnsToIndex", "event_time,user_id,price")
+        .option("cubeSize", 100000)
+        .option("analyzerImp", "sequential")
+        .save(tmpDir)
   }
 }
