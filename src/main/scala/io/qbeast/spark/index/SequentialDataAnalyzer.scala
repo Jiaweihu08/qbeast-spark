@@ -1,3 +1,6 @@
+/*
+ * Copyright 2021 Qbeast Analytics, S.L.
+ */
 package io.qbeast.spark.index
 
 import io.qbeast.core.model.{BroadcastedTableChanges, CubeId, _}
@@ -178,7 +181,7 @@ object SequentialDataAnalyzer extends OTreeDataAnalyzer with Serializable {
 
 }
 
-class PointCubeMapper(revision: Revision, targetDepth: Int) {
+class PointCubeMapper(revision: Revision, targetDepth: Int) extends Serializable {
 
   val findTargetCubeUDF: UserDefinedFunction = {
     udf((row: Row) => {
