@@ -4,18 +4,9 @@
 package io.qbeast.spark.index
 
 import io.qbeast.IISeq
-import io.qbeast.core.model.{
-  BroadcastedTableChanges,
-  CubeId,
-  CubeNormalizedWeight,
-  CubeWeightsBuilder,
-  IndexStatus,
-  Revision,
-  RevisionChange,
-  TableChanges,
-  Weight
-}
+import io.qbeast.core.model._
 import io.qbeast.core.transform.Transformation
+import io.qbeast.spark.index.DoublePassOTreeDataAnalyzer.addRandomWeight
 import io.qbeast.spark.index.QbeastColumns.{cubeToReplicateColumnName, weightColumnName}
 import io.qbeast.spark.index.SinglePassColStatsUtils.{
   getTransformations,
@@ -23,25 +14,14 @@ import io.qbeast.spark.index.SinglePassColStatsUtils.{
   mergedColStats,
   updatedColStats
 }
-import io.qbeast.spark.internal.QbeastFunctions.qbeastHash
 import org.apache.spark.qbeast.config.CUBE_WEIGHTS_BUFFER_CAPACITY
-import org.apache.spark.sql.{DataFrame, Dataset, SparkSession}
 import org.apache.spark.sql.functions.{col, lit, sum}
 import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.{DataFrame, Dataset, SparkSession}
 
 import scala.collection.mutable
 
 object SinglePassOTreeDataAnalyzer extends OTreeDataAnalyzer with Serializable {
-
-  /**
-   * Estimates MaxWeight on DataFrame
-   */
-  private[index] def addRandomWeight(revision: Revision): DataFrame => DataFrame =
-    (df: DataFrame) => {
-      df.withColumn(
-        weightColumnName,
-        qbeastHash(revision.columnTransformers.map(name => df(name.columnName)): _*))
-    }
 
   private[index] def estimateCubeWeights(
       revision: Revision): Dataset[CubeNormalizedWeight] => Dataset[(CubeId, NormalizedWeight)] =
@@ -90,35 +70,39 @@ object SinglePassOTreeDataAnalyzer extends OTreeDataAnalyzer with Serializable {
       selected
         .mapPartitions(rows => {
           val (iterForStats, iterForCubeWeights) = rows.duplicate
-          iterForStats.foreach { row =>
-            partitionColStats = partitionColStats.map(stats => updatedColStats(stats, row))
-          }
-
-          val partitionRevision =
-            revision.copy(transformations = getTransformations(partitionColStats))
-
-          val weights =
-            new CubeWeightsBuilder(
-              indexStatus = indexStatus,
-              numPartitions = numPartitions,
-              numElements = numElements,
-              bufferCapacity = bufferCapacity)
-
-          iterForCubeWeights.foreach { row =>
-            val point = RowUtils.rowValuesToPoint(row, partitionRevision)
-            val weight = Weight(row.getAs[Int](weightIndex))
-            if (isReplication) {
-              val parentBytes = row.getAs[Array[Byte]](cubeToReplicateColumnName)
-              val parent = Some(revision.createCubeId(parentBytes))
-              weights.update(point, weight, parent)
-            } else weights.update(point, weight)
-          }
-          weights
-            .result()
-            .map { case CubeNormalizedWeight(cubeBytes, weight) =>
-              CubeWeightAndStats(cubeBytes, weight, partitionColStats)
+          if (iterForStats.isEmpty) {
+            Seq[CubeWeightAndStats]().iterator
+          } else {
+            iterForStats.foreach { row =>
+              partitionColStats = partitionColStats.map(stats => updatedColStats(stats, row))
             }
-            .iterator
+
+            val partitionRevision =
+              revision.copy(transformations = getTransformations(partitionColStats))
+
+            val weights =
+              new CubeWeightsBuilder(
+                indexStatus = indexStatus,
+                numPartitions = numPartitions,
+                numElements = numElements,
+                bufferCapacity = bufferCapacity)
+
+            iterForCubeWeights.foreach { row =>
+              val point = RowUtils.rowValuesToPoint(row, partitionRevision)
+              val weight = Weight(row.getAs[Int](weightIndex))
+              if (isReplication) {
+                val parentBytes = row.getAs[Array[Byte]](cubeToReplicateColumnName)
+                val parent = Some(revision.createCubeId(parentBytes))
+                weights.update(point, weight, parent)
+              } else weights.update(point, weight)
+            }
+            weights
+              .result()
+              .map { case CubeNormalizedWeight(cubeBytes, weight) =>
+                CubeWeightAndStats(cubeBytes, weight, partitionColStats)
+              }
+              .iterator
+          }
         })
     }
 
