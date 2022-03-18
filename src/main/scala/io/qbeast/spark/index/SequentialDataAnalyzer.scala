@@ -3,7 +3,7 @@
  */
 package io.qbeast.spark.index
 
-import io.qbeast.core.model.{BroadcastedTableChanges, CubeId, _}
+import io.qbeast.core.model._
 import io.qbeast.spark.index.DoublePassOTreeDataAnalyzer.{
   addRandomWeight,
   calculateRevisionChanges,
@@ -18,8 +18,7 @@ import org.apache.spark.sql.{DataFrame, Dataset, Row, SparkSession}
 import scala.annotation.tailrec
 
 object SequentialDataAnalyzer extends OTreeDataAnalyzer with Serializable {
-  val spark: SparkSession = SparkSession.active
-  import spark.implicits._
+  lazy val spark: SparkSession = SparkSession.active
 
   private[index] def calculateTreeDepth(
       elementCount: Long,
@@ -60,9 +59,9 @@ object SequentialDataAnalyzer extends OTreeDataAnalyzer with Serializable {
       treeHeight: Int,
       level: Int,
       indexedData: DataFrame,
-      cubeWeights: Dataset[(CubeId, NormalizedWeight)] =
-        spark.emptyDataset[(CubeId, NormalizedWeight)])
+      cubeWeights: Dataset[(CubeId, NormalizedWeight)])
       : (DataFrame, Dataset[(CubeId, NormalizedWeight)]) = {
+    import spark.implicits._
 
     val levelCubeString: UserDefinedFunction =
       udf((cube: String) => cube.substring(0, level))
@@ -129,6 +128,8 @@ object SequentialDataAnalyzer extends OTreeDataAnalyzer with Serializable {
       dataFrame: DataFrame,
       indexStatus: IndexStatus,
       isReplication: Boolean): (DataFrame, TableChanges) = {
+    import spark.implicits._
+
     val columnTransformers = indexStatus.revision.columnTransformers
     val dataFrameStats = getDataFrameStats(dataFrame, columnTransformers)
 
@@ -157,7 +158,6 @@ object SequentialDataAnalyzer extends OTreeDataAnalyzer with Serializable {
         .transform(addRandomWeight(revision))
         .transform(addCubeId(revision, maxOTreeHeight))
     val dfSchema = dataFrame.schema.add(StructField(cubeColumnName, BinaryType, nullable = true))
-    val indexedData = spark.createDataFrame(spark.sparkContext.emptyRDD[Row], dfSchema)
 
     val (outputData, cubeWeightsDS) = generateOTreeIndex(
       dataWithWeightAndCube,
@@ -165,7 +165,8 @@ object SequentialDataAnalyzer extends OTreeDataAnalyzer with Serializable {
       dimensionCount,
       maxOTreeHeight,
       0,
-      indexedData)
+      spark.createDataFrame(spark.sparkContext.emptyRDD[Row], dfSchema),
+      spark.emptyDataset[(CubeId, NormalizedWeight)])
 
     val cubeWeights = cubeWeightsDS.collect().toMap
 
