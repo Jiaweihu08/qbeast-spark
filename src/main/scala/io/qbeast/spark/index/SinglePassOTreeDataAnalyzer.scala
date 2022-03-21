@@ -6,7 +6,7 @@ package io.qbeast.spark.index
 import io.qbeast.IISeq
 import io.qbeast.core.model._
 import io.qbeast.core.transform.Transformation
-import io.qbeast.spark.index.DoublePassOTreeDataAnalyzer.addRandomWeight
+import io.qbeast.spark.index.DoublePassOTreeDataAnalyzer.{addRandomWeight, estimateCubeWeights}
 import io.qbeast.spark.index.QbeastColumns.{cubeToReplicateColumnName, weightColumnName}
 import io.qbeast.spark.index.SinglePassColStatsUtils.{
   getTransformations,
@@ -15,31 +15,13 @@ import io.qbeast.spark.index.SinglePassColStatsUtils.{
   updatedColStats
 }
 import org.apache.spark.qbeast.config.CUBE_WEIGHTS_BUFFER_CAPACITY
-import org.apache.spark.sql.functions.{col, lit, sum}
+import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.{DataFrame, Dataset, SparkSession}
 
 import scala.collection.mutable
 
 object SinglePassOTreeDataAnalyzer extends OTreeDataAnalyzer with Serializable {
-
-  private[index] def estimateCubeWeights(
-      revision: Revision): Dataset[CubeNormalizedWeight] => Dataset[(CubeId, NormalizedWeight)] =
-    (partitionedEstimatedCubeWeights: Dataset[CubeNormalizedWeight]) => {
-
-      val sqlContext = SparkSession.active.sqlContext
-      import sqlContext.implicits._
-
-      // These column names are the ones specified in case class CubeNormalizedWeight
-      partitionedEstimatedCubeWeights
-        .groupBy("cubeBytes")
-        .agg(lit(1) / sum(lit(1.0) / col("normalizedWeight")))
-        .map { row =>
-          val bytes = row.getAs[Array[Byte]](0)
-          val estimatedWeight = row.getAs[Double](1)
-          (revision.createCubeId(bytes), estimatedWeight)
-        }
-    }
 
   private[index] def estimatePartitionCubeWeights(
       numElements: Long,
@@ -55,7 +37,9 @@ object SinglePassOTreeDataAnalyzer extends OTreeDataAnalyzer with Serializable {
       } else {
         Seq(weightColumnName)
       }
-      val cols = revision.columnTransformers.map(_.columnName) ++ indexColumns
+      val columnsToIndex = revision.columnTransformers.map(_.columnName)
+
+      val cols = columnsToIndex ++ indexColumns
 
       val numPartitions: Int = weightedDataFrame.rdd.getNumPartitions
       val bufferCapacity: Long = CUBE_WEIGHTS_BUFFER_CAPACITY
@@ -64,7 +48,6 @@ object SinglePassOTreeDataAnalyzer extends OTreeDataAnalyzer with Serializable {
         .select(cols.map(col): _*)
       val weightIndex = selected.schema.fieldIndex(weightColumnName)
 
-      val columnsToIndex = revision.columnTransformers.map(_.columnName)
       var partitionColStats = initializeColStats(columnsToIndex, selected.schema)
 
       selected
