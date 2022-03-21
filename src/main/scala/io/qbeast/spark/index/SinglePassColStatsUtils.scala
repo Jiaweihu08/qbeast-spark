@@ -62,7 +62,7 @@ object SinglePassColStatsUtils {
       if (stats.dType == "StringDataType") {
         HashTransformation()
       } else {
-        val (minNumber, maxNumber) = stats.dType match {
+        var (minNumber, maxNumber) = stats.dType match {
           case "DoubleDataType" | "DecimalDataType" =>
             (stats.min, stats.max)
           case "IntegerDataType" =>
@@ -72,8 +72,12 @@ object SinglePassColStatsUtils {
           case "LongDataType" =>
             (stats.min.asInstanceOf[Long], stats.max.asInstanceOf[Long])
         }
-        if (minNumber == maxNumber) IdentityTransformation
-        else LinearTransformation(minNumber, maxNumber, OrderedDataType(stats.dType))
+        if (minNumber == maxNumber) {
+          val epsilon = 42
+          minNumber -= epsilon
+          maxNumber += epsilon
+        }
+        LinearTransformation(minNumber, maxNumber, OrderedDataType(stats.dType))
       }
     }.toIndexedSeq
   }
