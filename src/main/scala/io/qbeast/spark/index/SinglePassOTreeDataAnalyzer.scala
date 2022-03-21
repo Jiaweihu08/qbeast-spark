@@ -169,12 +169,6 @@ object SinglePassOTreeDataAnalyzer extends OTreeDataAnalyzer with Serializable {
         allCubeOverlaps
     }
 
-//    val globalCubeWeights =
-//      globalCubeAndOverlaps
-//        .groupBy("cubeBytes")
-//        .agg(lit(1.0) / sum("overlap"))
-//        .map(row => CubeNormalizedWeight(row.getAs[Array[Byte]](0), row.getAs[Double](1)))
-
     (globalCubeAndOverlaps, globalTransformations)
   }
 
