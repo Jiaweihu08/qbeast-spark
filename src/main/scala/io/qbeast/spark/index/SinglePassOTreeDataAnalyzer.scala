@@ -30,29 +30,10 @@ object SinglePassOTreeDataAnalyzer extends OTreeDataAnalyzer with Serializable {
     (selected: DataFrame) => {
       val spark = SparkSession.active
       import spark.implicits._
-
-//    val indexColumns = if (isReplication) {
-//      Seq(weightColumnName, cubeToReplicateColumnName)
-//    } else {
-//      Seq(weightColumnName)
-//    }
-//    val columnsToIndex = revision.columnTransformers.map(_.columnName)
       // scalastyle:off println
-//
-//    val cols = columnsToIndex ++ indexColumns
-//
       val numPartitions: Int = selected.rdd.getNumPartitions
       val bufferCapacity: Long = CUBE_WEIGHTS_BUFFER_CAPACITY
-//
-//    val selected = weightedDataFrame
-//      .select(cols.map(col): _*)
       val weightIndex = selected.schema.fieldIndex(weightColumnName)
-//
-//    var partitionColStats = initializeColStats(columnsToIndex, selected.schema)
-//
-//    val colStatsAcc = new ColStatsAccumulator(partitionColStats)
-//    spark.sparkContext.register(colStatsAcc, "globalColStatsAcc")
-
       var partitionCalStats = initialColStats
 
       selected
@@ -64,7 +45,6 @@ object SinglePassOTreeDataAnalyzer extends OTreeDataAnalyzer with Serializable {
             iterForStats.foreach { row =>
               partitionCalStats = partitionCalStats.map(stats => updatedColStats(stats, row))
             }
-            println(s"before: ${globalColStatsAcc.value}")
             globalColStatsAcc.add(partitionCalStats)
             println(s"after: ${globalColStatsAcc.value}")
 
@@ -109,9 +89,7 @@ object SinglePassOTreeDataAnalyzer extends OTreeDataAnalyzer with Serializable {
               cubeWeight: NormalizedWeight,
               colStats: Seq[ColStats]) =>
           val allCubeOverlaps = mutable.ArrayBuffer[CubeNormalizedWeight]()
-
           val cube = CubeId(dimensionCount, cubeBytes)
-
           val cubeGlobalCoordinates = 0
             .until(dimensionCount)
             .map(i =>
@@ -187,21 +165,27 @@ object SinglePassOTreeDataAnalyzer extends OTreeDataAnalyzer with Serializable {
 
     // Estimate the cube weights at partition level
     val partitionedEstimatedCubeWeights =
-      selected.transform(
-        estimatePartitionCubeWeights(
-          0,
-          indexStatus.revision,
-          indexStatus,
-          isReplication,
-          initialColStats,
-          colStatsAcc))
+      selected
+        .transform(
+          estimatePartitionCubeWeights(
+            0,
+            indexStatus.revision,
+            indexStatus,
+            isReplication,
+            initialColStats,
+            colStatsAcc))
+        .queryExecution
+        .executedPlan
+        .execute()
 
     val globalColStats = colStatsAcc.value
-    val transformations = getTransformations(colStatsAcc.value)
-    val lastRevision = indexStatus.revision.copy(transformations = transformations)
+    globalColStats.foreach(println)
     // Map partition cube weights to global cube weights
     val globalEstimatedCubeWeights = partitionedEstimatedCubeWeights
       .transform(toGlobalCubeWeights(columnsToIndex.size, globalColStats))
+
+    val transformations = getTransformations(colStatsAcc.value)
+    val lastRevision = indexStatus.revision.copy(transformations = transformations)
 
     // Compute the overall estimated cube weights
     val estimatedCubeWeights =
@@ -215,6 +199,7 @@ object SinglePassOTreeDataAnalyzer extends OTreeDataAnalyzer with Serializable {
         supersededRevision = indexStatus.revision,
         timestamp = System.currentTimeMillis(),
         transformationsChanges = transformations.map(Option(_))))
+
     // Gather the new changes
     val tableChanges = BroadcastedTableChanges(
       revChange,

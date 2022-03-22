@@ -128,10 +128,7 @@ class ColStatsAccumulator(colStats: Seq[ColStats])
   }
 
   override def merge(other: AccumulatorV2[Seq[ColStats], Seq[ColStats]]): Unit = {
-    // scalastyle:off println
-    println(s"before merge: $value")
     this.add(other.value)
-    println(s"after merge: $value")
   }
 
   override def value: Seq[ColStats] = {
