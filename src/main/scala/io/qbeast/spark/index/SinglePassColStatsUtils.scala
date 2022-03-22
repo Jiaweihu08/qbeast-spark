@@ -84,6 +84,22 @@ object SinglePassColStatsUtils {
     }.toIndexedSeq
   }
 
+  def toGlobalCoordinates(
+      from: Double,
+      to: Double,
+      local: ColStats,
+      global: ColStats): (Double, Double) = {
+    assert(local.colName == global.colName && local.dType == global.dType)
+    if (global.dType == "StringDataType" || global.min == local.min && global.max == local.max) {
+      (from, to)
+    } else {
+      val (gScale, lScale) = (global.max - global.min, local.max - local.min)
+      val scale = lScale / gScale
+      val offset = (local.min - global.min) / gScale
+      (from * scale + offset, to * scale + offset)
+    }
+  }
+
 }
 
 class ColStatsAccumulator(colStats: Seq[ColStats])

@@ -9,7 +9,8 @@ import io.qbeast.spark.index.QbeastColumns.{cubeToReplicateColumnName, weightCol
 import io.qbeast.spark.index.SinglePassColStatsUtils.{
   getTransformations,
   initializeColStats,
-  updatedColStats
+  updatedColStats,
+  toGlobalCoordinates
 }
 import org.apache.spark.qbeast.config.CUBE_WEIGHTS_BUFFER_CAPACITY
 import org.apache.spark.sql.functions.col
@@ -223,22 +224,6 @@ object SinglePassOTreeDataAnalyzer extends OTreeDataAnalyzer with Serializable {
       else Set.empty[CubeId])
 
     (weightedDataFrame, tableChanges)
-  }
-
-  def toGlobalCoordinates(
-      from: Double,
-      to: Double,
-      local: ColStats,
-      global: ColStats): (Double, Double) = {
-    assert(local.colName == global.colName && local.dType == global.dType)
-    if (global.dType == "StringDataType" || global.min == local.min && global.max == local.max) {
-      (from, to)
-    } else {
-      val (gScale, lScale) = (global.max - global.min, local.max - local.min)
-      val scale = lScale / gScale
-      val offset = (local.min - global.min) / gScale
-      (from * scale + offset, to * scale + offset)
-    }
   }
 
 }
