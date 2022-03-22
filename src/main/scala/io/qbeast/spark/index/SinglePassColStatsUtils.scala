@@ -8,6 +8,7 @@ import io.qbeast.core.model.{DoubleDataType, OrderedDataType}
 import io.qbeast.core.transform.{HashTransformation, LinearTransformation, Transformation}
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.types.StructType
+import org.apache.spark.util.AccumulatorV2
 
 object SinglePassColStatsUtils {
 
@@ -85,11 +86,50 @@ object SinglePassColStatsUtils {
 
 }
 
+class ColStatsAccumulator(colStats: Seq[ColStats])
+    extends AccumulatorV2[Seq[ColStats], Seq[ColStats]] {
+
+  private var columnStats: Seq[ColStats] = colStats
+
+  override def isZero: Boolean = {
+    columnStats.forall { stats => stats.min == Double.MaxValue && stats.max == Double.MinValue }
+  }
+
+  override def copy(): AccumulatorV2[Seq[ColStats], Seq[ColStats]] = this
+
+  override def reset(): Unit = {
+    columnStats = columnStats.map { stats =>
+      stats.copy(min = Double.MaxValue, max = Double.MinValue)
+    }
+  }
+
+  override def add(v: Seq[ColStats]): Unit = {
+    columnStats = columnStats.zip(v).map { case (thisColStats, thatColStats) =>
+      thisColStats.copy(
+        min = thisColStats.min.min(thatColStats.min),
+        max = thisColStats.max.max(thatColStats.max))
+    }
+  }
+
+  override def merge(other: AccumulatorV2[Seq[ColStats], Seq[ColStats]]): Unit = {
+    // scalastyle:off println
+    println(s"before merge: $value")
+    this.add(other.value)
+    println(s"after merge: $value")
+  }
+
+  override def value: Seq[ColStats] = {
+    columnStats
+  }
+
+}
+
 case class ColStats(
     colName: String,
     dType: String,
     min: Double = Double.MaxValue,
     max: Double = Double.MinValue)
+    extends Serializable
 
 case class CubeWeightAndStats(
     cubeBytes: Array[Byte],
