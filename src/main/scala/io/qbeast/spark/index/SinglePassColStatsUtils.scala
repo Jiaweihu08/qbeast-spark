@@ -28,7 +28,7 @@ object SinglePassColStatsUtils {
     }
   }
 
-  def mergedColStats(global: ColStats, local: ColStats): ColStats = {
+  def mergeColStats(global: ColStats, local: ColStats): ColStats = {
     assert(global.colName == local.colName && global.dType == local.dType)
     if (global.dType == "StringDataType") {
       global
@@ -37,7 +37,7 @@ object SinglePassColStatsUtils {
     }
   }
 
-  def updatedColStats(stats: ColStats, row: Row): ColStats = {
+  def updateColStats(stats: ColStats, row: Row): ColStats = {
     if (stats.dType == "StringDataType") {
       stats
     } else {
