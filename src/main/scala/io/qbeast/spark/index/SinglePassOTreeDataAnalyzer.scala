@@ -18,22 +18,13 @@ object SinglePassOTreeDataAnalyzer extends OTreeDataAnalyzer with Serializable {
   private[index] def estimatePartitionCubeWeights(
       numElements: Long,
       columnsToIndex: Seq[String],
+      colStatsAcc: ColStatsAccumulator,
       revision: Revision,
       indexStatus: IndexStatus,
       isReplication: Boolean): DataFrame => Dataset[CubeWeightAndStats] =
-    (weightedDataFrame: DataFrame) => {
+    (selected: DataFrame) => {
       val spark = SparkSession.active
       import spark.implicits._
-
-      val indexColumns = if (isReplication) {
-        Seq(weightColumnName, cubeToReplicateColumnName)
-      } else {
-        Seq(weightColumnName)
-      }
-      val cols = columnsToIndex ++ indexColumns
-
-      val selected = weightedDataFrame
-        .select(cols.map(col): _*)
 
       val numPartitions: Int = selected.rdd.getNumPartitions
       val bufferCapacity: Long = CUBE_WEIGHTS_BUFFER_CAPACITY
@@ -51,6 +42,8 @@ object SinglePassOTreeDataAnalyzer extends OTreeDataAnalyzer with Serializable {
               case (colStats, row) =>
                 colStats.map(stats => updateColStats(stats, row))
             }
+
+            colStatsAcc.add(partitionColStats)
 
             val partitionRevision =
               revision.copy(transformations = getTransformations(partitionColStats))
@@ -141,6 +134,8 @@ object SinglePassOTreeDataAnalyzer extends OTreeDataAnalyzer with Serializable {
       dataFrame: DataFrame,
       indexStatus: IndexStatus,
       isReplication: Boolean): (DataFrame, TableChanges) = {
+    val sparkContext = SparkSession.active.sparkContext
+
 //    if (dataFrame.take(1).isEmpty) {
 //      throw new RuntimeException(
 //        "The DataFrame is empty, why are you trying to index an empty dataset?")
@@ -152,26 +147,34 @@ object SinglePassOTreeDataAnalyzer extends OTreeDataAnalyzer with Serializable {
 
     val columnsToIndex = indexStatus.revision.columnTransformers.map(_.columnName)
 
+    val oTreeColumns = if (isReplication) {
+      Seq(weightColumnName, cubeToReplicateColumnName)
+    } else {
+      Seq(weightColumnName)
+    }
+    val cols = columnsToIndex ++ oTreeColumns
+
+    val selected = weightedDataFrame
+      .select(cols.map(col): _*)
+
+    val globalColStatsAcc = new ColStatsAccumulator(
+      initializeColStats(columnsToIndex, selected.schema))
+    sparkContext.register(globalColStatsAcc, "globalColStatsAcc")
+
     // Estimate the cube weights at partition level
     val partitionedEstimatedCubeWeights =
-      weightedDataFrame
+      selected
         .transform(
           estimatePartitionCubeWeights(
             0,
             columnsToIndex,
+            globalColStatsAcc,
             indexStatus.revision,
             indexStatus,
             isReplication))
         .collect()
 
-    val globalColStats = partitionedEstimatedCubeWeights.reduce {
-      (cwL: CubeWeightAndStats, cwR: CubeWeightAndStats) =>
-        val updatedColStats = cwL.colStats.zip(cwR.colStats).map { case (statsL, statsR) =>
-          mergeColStats(statsL, statsR)
-        }
-        cwL.copy(colStats = updatedColStats)
-    }.colStats
-
+    val globalColStats = globalColStatsAcc.value
     // Map partition cube weights to global cube weights
     val globalEstimatedCubeWeights =
       toGlobalCubeWeights(partitionedEstimatedCubeWeights, columnsToIndex.size, globalColStats)
