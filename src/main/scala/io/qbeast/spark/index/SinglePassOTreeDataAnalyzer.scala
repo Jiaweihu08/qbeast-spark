@@ -85,47 +85,53 @@ object SinglePassOTreeDataAnalyzer extends OTreeDataAnalyzer with Serializable {
             cubeWeight: NormalizedWeight,
             colStats: Seq[ColStats]) =>
         val allCubeOverlaps = mutable.ArrayBuffer[CubeNormalizedWeight]()
-        val cube = CubeId(dimensionCount, cubeBytes)
-        val cubeGlobalCoordinates = 0
-          .until(dimensionCount)
-          .map(i =>
-            toGlobalCoordinates(
-              cube.from.coordinates(i),
-              cube.to.coordinates(i),
-              colStats(i),
-              globalColStats(i)))
+        if (colStats.zip(globalColStats).forall { case (local, global) =>
+            local.min == global.min && local.max == global.max
+          }) {
+          allCubeOverlaps
+        } else {
+          val cube = CubeId(dimensionCount, cubeBytes)
+          val cubeGlobalCoordinates = 0
+            .until(dimensionCount)
+            .map(i =>
+              toGlobalCoordinates(
+                cube.from.coordinates(i),
+                cube.to.coordinates(i),
+                colStats(i),
+                globalColStats(i)))
 
-        var cubeCandidates = Seq(CubeId.root(dimensionCount))
-        (0 until cube.depth).foreach { _ =>
-          cubeCandidates = cubeCandidates.flatMap(c => c.children)
-        }
+          var cubeCandidates = Seq(CubeId.root(dimensionCount))
+          (0 until cube.depth).foreach { _ =>
+            cubeCandidates = cubeCandidates.flatMap(c => c.children)
+          }
 
-        var cubeOverlaps = 0.0
-        cubeCandidates.foreach { candidate =>
-          var isOverlapping = true
-          val candidateCoordinates = candidate.from.coordinates.zip(candidate.to.coordinates)
-          val dimensionOverlaps = candidateCoordinates.zip(cubeGlobalCoordinates).map {
-            case ((candidateFrom, candidateTo), (cubeFrom, cubeTo)) =>
-              if (candidateFrom < cubeTo && cubeFrom < candidateTo) {
-                val cubeDimWidth = cubeTo - cubeFrom
-                (candidateTo - cubeFrom)
-                  .min(cubeTo - candidateFrom)
-                  .min(cubeDimWidth) / cubeDimWidth
-              } else {
-                isOverlapping = false
-                0.0
-              }
+          var cubeOverlaps = 0.0
+          cubeCandidates.foreach { candidate =>
+            var isOverlapping = true
+            val candidateCoordinates = candidate.from.coordinates.zip(candidate.to.coordinates)
+            val dimensionOverlaps = candidateCoordinates.zip(cubeGlobalCoordinates).map {
+              case ((candidateFrom, candidateTo), (cubeFrom, cubeTo)) =>
+                if (candidateFrom < cubeTo && cubeFrom < candidateTo) {
+                  val cubeDimWidth = cubeTo - cubeFrom
+                  (candidateTo - cubeFrom)
+                    .min(cubeTo - candidateFrom)
+                    .min(cubeDimWidth) / cubeDimWidth
+                } else {
+                  isOverlapping = false
+                  0.0
+                }
+            }
+            if (isOverlapping) {
+              val candidateOverlap = dimensionOverlaps
+                .foldLeft(1.0)((acc, dimOverlap) => acc * dimOverlap)
+              cubeOverlaps += candidateOverlap
+              allCubeOverlaps += CubeNormalizedWeight(cubeBytes, cubeWeight / candidateOverlap)
+            }
           }
-          if (isOverlapping) {
-            val candidateOverlap = dimensionOverlaps
-              .foldLeft(1.0)((acc, dimOverlap) => acc * dimOverlap)
-            cubeOverlaps += candidateOverlap
-            allCubeOverlaps += CubeNormalizedWeight(cubeBytes, cubeWeight / candidateOverlap)
-          }
+          // Make sure that all overlapping cubes from the same depth are found
+          assert(math.abs(1.0 - cubeOverlaps) < 1e-15)
+          allCubeOverlaps
         }
-        // Make sure that all overlapping cubes from the same depth are found
-        assert(math.abs(1.0 - cubeOverlaps) < 1e-15)
-        allCubeOverlaps
     }
     globalCubeAndOverlaps
   }
