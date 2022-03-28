@@ -102,7 +102,7 @@ object SequentialDataAnalyzer extends OTreeDataAnalyzer with Serializable {
         .drop("levelCube")
         .drop("elemPosInPayload")
 
-    if (nextIterData.isEmpty || level >= treeHeight) {
+    if (level == treeHeight) {
       (nextIndexedData, nextCubeWeights)
     } else {
       generateOTreeIndex(
