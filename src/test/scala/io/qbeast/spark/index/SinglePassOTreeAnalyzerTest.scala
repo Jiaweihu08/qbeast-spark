@@ -129,7 +129,7 @@ class SinglePassOTreeAnalyzerTest extends QbeastIntegrationTestSpec {
       partitionColStats zip transformations foreach {
         case (
               ColStats(_, _, colMin: Double, colMax: Double),
-              LinearTransformation(gMin: Double, gMax: Double, _)) =>
+              LinearTransformation(gMin: Double, gMax: Double, _, _)) =>
           colMin shouldBe >=(gMin)
           colMax shouldBe <=(gMax)
         case _ => true
@@ -188,7 +188,7 @@ class SinglePassOTreeAnalyzerTest extends QbeastIntegrationTestSpec {
         .mapValues(cubeWeights => 1.0 / cubeWeights.map(1.0 / _.normalizedWeight).sum)
 
     // scalastyle:off println
-    estimatedCubeWeights.toList.sortBy(_._1).foreach(println)
+//    estimatedCubeWeights.toList.sortBy(_._1).foreach(println)
     estimatedCubeWeights.foreach { case (_, weight) =>
       weight shouldBe >(0.0)
     }

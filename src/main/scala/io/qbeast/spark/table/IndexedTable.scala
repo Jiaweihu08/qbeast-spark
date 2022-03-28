@@ -159,7 +159,7 @@ private[table] class IndexedTableImpl(
         IndexStatus(revisionBuilder.createNewRevision(tableID, data.schema, parameters))
       }
 
-    val relation = write(data, indexStatus, append)
+    val relation = write(data, indexStatus, append, parameters.getOrElse("analyzerImp", "double"))
     relation
   }
 

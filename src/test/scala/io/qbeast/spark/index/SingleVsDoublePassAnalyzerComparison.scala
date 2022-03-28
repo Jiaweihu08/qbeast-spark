@@ -1,6 +1,6 @@
 package io.qbeast.spark.index
 
-import io.qbeast.spark.{QbeastIntegrationTestSpec, QbeastTable}
+import io.qbeast.spark.{QbeastIntegrationTestSpec}
 
 class SingleVsDoublePassAnalyzerComparison extends QbeastIntegrationTestSpec {
   val dataSource = "./src/test/resources/ecommerce100k_2019_Oct.csv"
