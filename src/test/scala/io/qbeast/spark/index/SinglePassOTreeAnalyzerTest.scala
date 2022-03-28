@@ -8,7 +8,6 @@ import io.qbeast.spark.QbeastIntegrationTestSpec
 import io.qbeast.spark.index.QbeastColumns.weightColumnName
 import io.qbeast.spark.index.SinglePassColStatsUtils.{getTransformations, initializeColStats}
 import io.qbeast.spark.index.SinglePassOTreeDataAnalyzer.{
-  computeEstimatedCubeWeights,
   estimatePartitionCubeWeights,
   toGlobalCubeWeights
 }
@@ -184,10 +183,12 @@ class SinglePassOTreeAnalyzerTest extends QbeastIntegrationTestSpec {
 
     // Compute the overall estimated cube weights
     val estimatedCubeWeights: Map[CubeId, NormalizedWeight] =
-      computeEstimatedCubeWeights(globalEstimatedCubeWeights, lastRevision)
+      globalEstimatedCubeWeights
+        .groupBy(cw => lastRevision.createCubeId(cw.cubeBytes))
+        .mapValues(cubeWeights => 1.0 / cubeWeights.map(1.0 / _.normalizedWeight).sum)
 
     // scalastyle:off println
-    estimatedCubeWeights.foreach(println)
+    estimatedCubeWeights.toList.sortBy(_._1).foreach(println)
     estimatedCubeWeights.foreach { case (_, weight) =>
       weight shouldBe >(0.0)
     }

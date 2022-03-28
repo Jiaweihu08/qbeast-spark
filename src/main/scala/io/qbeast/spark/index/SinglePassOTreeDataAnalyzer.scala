@@ -60,7 +60,7 @@ object SinglePassOTreeDataAnalyzer extends OTreeDataAnalyzer with Serializable {
               val weight = Weight(row.getAs[Int](weightIndex))
               if (isReplication) {
                 val parentBytes = row.getAs[Array[Byte]](cubeToReplicateColumnName)
-                val parent = Some(revision.createCubeId(parentBytes))
+                val parent = Some(partitionRevision.createCubeId(parentBytes))
                 weights.update(point, weight, parent)
               } else weights.update(point, weight)
             }
@@ -79,7 +79,7 @@ object SinglePassOTreeDataAnalyzer extends OTreeDataAnalyzer with Serializable {
       dimensionCount: Int,
       globalColStats: Seq[ColStats]): Array[CubeNormalizedWeight] = {
 
-    val globalCubeAndOverlaps = partitionedEstimatedCubeWeights.flatMap {
+    partitionedEstimatedCubeWeights.flatMap {
       case CubeWeightAndStats(
             cubeBytes: Array[Byte],
             cubeWeight: NormalizedWeight,
@@ -133,7 +133,6 @@ object SinglePassOTreeDataAnalyzer extends OTreeDataAnalyzer with Serializable {
           allCubeOverlaps
         }
     }
-    globalCubeAndOverlaps
   }
 
   override def analyze(
@@ -190,7 +189,9 @@ object SinglePassOTreeDataAnalyzer extends OTreeDataAnalyzer with Serializable {
 
     // Compute the overall estimated cube weights
     val estimatedCubeWeights: Map[CubeId, NormalizedWeight] =
-      computeEstimatedCubeWeights(globalEstimatedCubeWeights, lastRevision)
+      globalEstimatedCubeWeights
+        .groupBy(cw => lastRevision.createCubeId(cw.cubeBytes))
+        .mapValues(cubeWeights => 1.0 / cubeWeights.map(1.0 / _.normalizedWeight).sum)
 
     val revChange = Some(
       RevisionChange(
@@ -207,30 +208,6 @@ object SinglePassOTreeDataAnalyzer extends OTreeDataAnalyzer with Serializable {
       else Set.empty[CubeId])
 
     (weightedDataFrame, tableChanges)
-  }
-
-  private[index] def computeEstimatedCubeWeights(
-      globalEstimatedCubeWeights: Array[CubeNormalizedWeight],
-      revision: Revision): Map[CubeId, NormalizedWeight] = {
-
-    val estimatedByteWeights =
-      mutable.Map.empty[Array[Byte], mutable.Builder[NormalizedWeight, Vector[NormalizedWeight]]]
-
-    for (cubeWeight <- globalEstimatedCubeWeights) {
-      val bytes: Array[Byte] = cubeWeight.cubeBytes
-      if (estimatedByteWeights.contains(bytes)) {
-        estimatedByteWeights(bytes) += cubeWeight.normalizedWeight
-      } else {
-        val builder = Vector.newBuilder += cubeWeight.normalizedWeight
-        estimatedByteWeights += (bytes -> builder)
-      }
-    }
-
-    estimatedByteWeights.map { case (bytes, weights) =>
-      val cubeId = revision.createCubeId(bytes)
-      val aggregatedNormalizedWeight = 1.0 / weights.result().map(w => 1.0 / w).sum
-      cubeId -> aggregatedNormalizedWeight
-    }.toMap
   }
 
 }
