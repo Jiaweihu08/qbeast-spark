@@ -15,7 +15,7 @@ object SinglePassOTreeDataAnalyzer extends OTreeDataAnalyzer with Serializable {
 
   private[index] def estimatePartitionCubeWeights(
       numElements: Long,
-      columnsToIndex: Seq[String],
+      initialColStats: Seq[ColStats],
       colStatsAcc: ColStatsAccumulator,
       revision: Revision,
       indexStatus: IndexStatus,
@@ -27,8 +27,6 @@ object SinglePassOTreeDataAnalyzer extends OTreeDataAnalyzer with Serializable {
       val numPartitions: Int = selected.rdd.getNumPartitions
       val bufferCapacity: Long = CUBE_WEIGHTS_BUFFER_CAPACITY
       val weightIndex = selected.schema.fieldIndex(weightColumnName)
-
-      val initialColStats: Seq[ColStats] = initializeColStats(columnsToIndex, selected.schema)
 
       selected
         .mapPartitions(rows => {
@@ -112,11 +110,8 @@ object SinglePassOTreeDataAnalyzer extends OTreeDataAnalyzer with Serializable {
           // the useful branches at each iteration.
           val overlappingCubes = (0 until cube.depth).foldLeft(Seq(CubeId.root(dimensionCount))) {
             case (candidates, _) =>
-              candidates.flatMap(_.children).filter(c => hasOverlap(c, cubeGlobalCoordinates))
+              candidates.flatMap(_.children.filter(c => hasOverlap(c, cubeGlobalCoordinates)))
           }
-
-          // scalastyle:off println
-          println(s"Number of overlapping cubes: ${overlappingCubes.size}")
 
           // Compute overlaps for each overlapping cube
           var cubeOverlaps = 0.0
@@ -170,8 +165,8 @@ object SinglePassOTreeDataAnalyzer extends OTreeDataAnalyzer with Serializable {
     val selected = weightedDataFrame
       .select(cols.map(col): _*)
 
-    val globalColStatsAcc = new ColStatsAccumulator(
-      initializeColStats(columnsToIndex, selected.schema))
+    val initialColStats = initializeColStats(columnsToIndex, selected.schema)
+    val globalColStatsAcc = new ColStatsAccumulator(initialColStats)
     sparkContext.register(globalColStatsAcc, "globalColStatsAcc")
 
     // Estimate the cube weights at partition level
@@ -180,7 +175,7 @@ object SinglePassOTreeDataAnalyzer extends OTreeDataAnalyzer with Serializable {
         .transform(
           estimatePartitionCubeWeights(
             0,
-            columnsToIndex,
+            initialColStats,
             globalColStatsAcc,
             indexStatus.revision,
             indexStatus,

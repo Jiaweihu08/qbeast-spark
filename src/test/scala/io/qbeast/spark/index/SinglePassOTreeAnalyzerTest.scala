@@ -52,8 +52,8 @@ class SinglePassOTreeAnalyzerTest extends QbeastIntegrationTestSpec {
     val selected = weightedDataFrame
       .select(cols.map(col): _*)
 
-    val globalColStatsAcc =
-      new ColStatsAccumulator(initializeColStats(columnsToIndex, selected.schema))
+    val initialColStats = initializeColStats(columnsToIndex, selected.schema)
+    val globalColStatsAcc = new ColStatsAccumulator(initialColStats)
     spark.sparkContext.register(globalColStatsAcc, "globalColStatsAcc")
 
     // Compute partition-level CubeWeights
@@ -61,7 +61,7 @@ class SinglePassOTreeAnalyzerTest extends QbeastIntegrationTestSpec {
       .transform(
         estimatePartitionCubeWeights(
           0,
-          columnsToIndex,
+          initialColStats,
           globalColStatsAcc,
           revision,
           indexStatus,
@@ -96,15 +96,16 @@ class SinglePassOTreeAnalyzerTest extends QbeastIntegrationTestSpec {
     val cols = columnsToIndex :+ weightColumnName
     val selected = weightedDataFrame
       .select(cols.map(col): _*)
-    val globalColStatsAcc =
-      new ColStatsAccumulator(initializeColStats(columnsToIndex, selected.schema))
+
+    val initialColStats = initializeColStats(columnsToIndex, selected.schema)
+    val globalColStatsAcc = new ColStatsAccumulator(initialColStats)
     spark.sparkContext.register(globalColStatsAcc, "globalColStatsAcc")
     // Compute partition-level CubeWeights
     val partitionedEstimatedCubeWeights = selected
       .transform(
         estimatePartitionCubeWeights(
           0,
-          columnsToIndex,
+          initialColStats,
           globalColStatsAcc,
           revision,
           indexStatus,
@@ -157,8 +158,9 @@ class SinglePassOTreeAnalyzerTest extends QbeastIntegrationTestSpec {
     val cols = columnsToIndex :+ weightColumnName
     val selected = weightedDataFrame
       .select(cols.map(col): _*)
-    val globalColStatsAcc =
-      new ColStatsAccumulator(initializeColStats(columnsToIndex, selected.schema))
+
+    val initialColStats = initializeColStats(columnsToIndex, selected.schema)
+    val globalColStatsAcc = new ColStatsAccumulator(initialColStats)
     spark.sparkContext.register(globalColStatsAcc, "globalColStatsAcc")
     // Estimate partition-level cube weights
     val partitionedEstimatedCubeWeights =
@@ -166,11 +168,11 @@ class SinglePassOTreeAnalyzerTest extends QbeastIntegrationTestSpec {
         .transform(
           estimatePartitionCubeWeights(
             0,
-            columnsToIndex,
+            initialColStats,
             globalColStatsAcc,
             indexStatus.revision,
             indexStatus,
-            false))
+            isReplication = false))
         .collect()
 
     // Get global column min/max for all indexing columns and compute global-level CubeWeights
