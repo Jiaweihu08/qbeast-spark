@@ -11,8 +11,6 @@ import org.apache.spark.qbeast.config.CUBE_WEIGHTS_BUFFER_CAPACITY
 import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.{DataFrame, Dataset, SparkSession}
 
-import scala.collection.mutable
-
 object SinglePassOTreeDataAnalyzer extends OTreeDataAnalyzer with Serializable {
 
   private[index] def estimatePartitionCubeWeights(
@@ -74,6 +72,17 @@ object SinglePassOTreeDataAnalyzer extends OTreeDataAnalyzer with Serializable {
         })
     }
 
+  private[index] def hasOverlap(
+      candidate: CubeId,
+      cubeGlobalCoordinates: Seq[(Double, Double)]): Boolean = {
+    // For two cubes to overlap, all dimensions must overlap
+    candidate.from.coordinates.indices.forall { i =>
+      val cubeFrom = cubeGlobalCoordinates(i)._1
+      val cubeTo = cubeGlobalCoordinates(i)._2
+      candidate.from.coordinates(i) < cubeTo && cubeFrom < candidate.to.coordinates(i)
+    }
+  }
+
   private[index] def toGlobalCubeWeights(
       partitionedEstimatedCubeWeights: Array[CubeWeightAndStats],
       dimensionCount: Int,
@@ -83,54 +92,53 @@ object SinglePassOTreeDataAnalyzer extends OTreeDataAnalyzer with Serializable {
       case CubeWeightAndStats(
             cubeBytes: Array[Byte],
             cubeWeight: NormalizedWeight,
-            colStats: Seq[ColStats]) =>
-        val allCubeOverlaps = mutable.ArrayBuffer[CubeNormalizedWeight]()
-        if (colStats.zip(globalColStats).forall { case (local, global) =>
-            local.min == global.min && local.max == global.max
-          }) {
-          allCubeOverlaps
+            localColStats: Seq[ColStats]) =>
+        val hasGlobalRanges = (0 until dimensionCount).forall { idx =>
+          localColStats(idx).min == globalColStats(idx).min &&
+          localColStats(idx).max == globalColStats(idx).max
+        }
+        if (hasGlobalRanges) {
+          // If a CubeWeightAndStats has global ranges, return directly
+          Seq(CubeNormalizedWeight(cubeBytes, cubeWeight))
         } else {
           val cube = CubeId(dimensionCount, cubeBytes)
-          val cubeGlobalCoordinates = 0
-            .until(dimensionCount)
-            .map(i =>
-              toGlobalCoordinates(
-                cube.from.coordinates(i),
-                cube.to.coordinates(i),
-                colStats(i),
-                globalColStats(i)))
+          val cubeGlobalCoordinates = toGlobalCoordinates(
+            cube.from.coordinates,
+            cube.to.coordinates,
+            localColStats,
+            globalColStats)
 
-          var cubeCandidates = Seq(CubeId.root(dimensionCount))
-          (0 until cube.depth).foreach { _ =>
-            cubeCandidates = cubeCandidates.flatMap(c => c.children)
+          // Find the overlapping cubes that are from cube.depth. Considering only
+          // the useful branches at each iteration.
+          val overlappingCubes = (0 until cube.depth).foldLeft(Seq(CubeId.root(dimensionCount))) {
+            case (candidates, _) =>
+              candidates.flatMap(_.children).filter(c => hasOverlap(c, cubeGlobalCoordinates))
           }
 
+          // scalastyle:off println
+          println(s"Number of overlapping cubes: ${overlappingCubes.size}")
+
+          // Compute overlaps for each overlapping cube
           var cubeOverlaps = 0.0
-          cubeCandidates.foreach { candidate =>
-            var isOverlapping = true
-            val candidateCoordinates = candidate.from.coordinates.zip(candidate.to.coordinates)
-            val dimensionOverlaps = candidateCoordinates.zip(cubeGlobalCoordinates).map {
-              case ((candidateFrom, candidateTo), (cubeFrom, cubeTo)) =>
-                if (candidateFrom < cubeTo && cubeFrom < candidateTo) {
-                  val cubeDimWidth = cubeTo - cubeFrom
-                  (candidateTo - cubeFrom)
-                    .min(cubeTo - candidateFrom)
-                    .min(cubeDimWidth) / cubeDimWidth
-                } else {
-                  isOverlapping = false
-                  0.0
-                }
+          val overlappingCubeWeights = overlappingCubes.map { candidate =>
+            val dimensionOverlaps = cube.from.coordinates.indices.map { i =>
+              val (cubeFrom, cubeTo) = cubeGlobalCoordinates(i)
+              val candidateFrom = candidate.from.coordinates(i)
+              val candidateTo = candidate.to.coordinates(i)
+              assert(candidateFrom < cubeTo && cubeFrom < candidateTo)
+              val cubeDimWidth = cubeTo - cubeFrom
+              (candidateTo - cubeFrom)
+                .min(cubeTo - candidateFrom)
+                .min(cubeDimWidth) / cubeDimWidth
             }
-            if (isOverlapping) {
-              val candidateOverlap = dimensionOverlaps
-                .foldLeft(1.0)((acc, dimOverlap) => acc * dimOverlap)
-              cubeOverlaps += candidateOverlap
-              allCubeOverlaps += CubeNormalizedWeight(cubeBytes, cubeWeight / candidateOverlap)
-            }
+            val candidateOverlap = dimensionOverlaps.product
+            assert(candidateOverlap > 0.0, "Non-existent overlap")
+            cubeOverlaps += candidateOverlap
+            CubeNormalizedWeight(cubeBytes, cubeWeight / candidateOverlap)
           }
           // Make sure that all overlapping cubes from the same depth are found
           assert(math.abs(1.0 - cubeOverlaps) < 1e-15)
-          allCubeOverlaps
+          overlappingCubeWeights
         }
     }
   }
@@ -181,6 +189,8 @@ object SinglePassOTreeDataAnalyzer extends OTreeDataAnalyzer with Serializable {
 
     val globalColStats = globalColStatsAcc.value
     // Map partition cube weights to global cube weights
+    // scalastyle:off println
+    println("Computing global-level CubeWeights")
     val globalEstimatedCubeWeights =
       toGlobalCubeWeights(partitionedEstimatedCubeWeights, columnsToIndex.size, globalColStats)
 
@@ -188,6 +198,7 @@ object SinglePassOTreeDataAnalyzer extends OTreeDataAnalyzer with Serializable {
     val lastRevision = indexStatus.revision.copy(transformations = transformations)
 
     // Compute the overall estimated cube weights
+    println("Computing overall CubeWeights")
     val estimatedCubeWeights: Map[CubeId, NormalizedWeight] =
       globalEstimatedCubeWeights
         .groupBy(cw => lastRevision.createCubeId(cw.cubeBytes))
