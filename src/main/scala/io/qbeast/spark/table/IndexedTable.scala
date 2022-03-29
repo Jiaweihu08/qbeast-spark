@@ -6,7 +6,7 @@ package io.qbeast.spark.table
 import io.qbeast.core.keeper.Keeper
 import io.qbeast.core.model._
 import io.qbeast.spark.delta.CubeDataLoader
-import io.qbeast.spark.index.QbeastColumns
+import io.qbeast.spark.index.{QbeastColumns, SequentialWriter}
 import io.qbeast.spark.internal.QbeastOptions
 import io.qbeast.spark.internal.sources.QbeastBaseRelation
 import org.apache.spark.sql.delta.actions.FileAction
@@ -221,12 +221,16 @@ private[table] class IndexedTableImpl(
 
     val schema = data.schema
     metadataManager.updateWithTransaction(tableID, schema, append) {
-      val (qbeastData, tableChanges) =
-        indexManager.index(data, indexStatus, analyzerImp)
-      val fileActions = dataWriter.write(tableID, schema, qbeastData, tableChanges)
-      (tableChanges, fileActions)
+      if (analyzerImp == "sequential") {
+        val sequentialWriter = new SequentialWriter(dataWriter, schema, tableID)
+        sequentialWriter.piecewiseSequentialWriting(data, indexStatus)
+      } else {
+        val (qbeastData, tableChanges) =
+          indexManager.index(data, indexStatus, analyzerImp)
+        val fileActions = dataWriter.write(tableID, schema, qbeastData, tableChanges)
+        (tableChanges, fileActions)
+      }
     }
-
   }
 
   override def analyze(revisionID: RevisionID): Seq[String] = {
