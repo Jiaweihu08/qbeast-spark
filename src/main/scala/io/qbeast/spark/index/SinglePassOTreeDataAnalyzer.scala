@@ -184,8 +184,7 @@ object SinglePassOTreeDataAnalyzer extends OTreeDataAnalyzer with Serializable {
 
     val globalColStats = globalColStatsAcc.value
     // Map partition cube weights to global cube weights
-    // scalastyle:off println
-    println("Computing global-level CubeWeights")
+
     val globalEstimatedCubeWeights =
       toGlobalCubeWeights(partitionedEstimatedCubeWeights, columnsToIndex.size, globalColStats)
 
@@ -193,7 +192,6 @@ object SinglePassOTreeDataAnalyzer extends OTreeDataAnalyzer with Serializable {
     val lastRevision = indexStatus.revision.copy(transformations = transformations)
 
     // Compute the overall estimated cube weights
-    println("Computing overall CubeWeights")
     val estimatedCubeWeights: Map[CubeId, NormalizedWeight] =
       globalEstimatedCubeWeights
         .groupBy(cw => lastRevision.createCubeId(cw.cubeBytes))
