@@ -46,8 +46,6 @@ class SequentialWriter(
 
     val levelElems = dataWithPositionInPayload
       .where(s"elemPosInPayload <= $desiredCubeSize")
-      .drop(cubeColumnName)
-      .drop("elemPosInPayload")
 
     val levelCubeWeightsWindowSpec =
       Window.partitionBy("levelCube").orderBy(desc(weightColumnName))
@@ -64,9 +62,10 @@ class SequentialWriter(
       .toMap
 
     val indexedData = levelElems
+      .drop(cubeColumnName)
       .withColumn(cubeColumnName, cubeStringToBytes(col("levelCube"), lit(dimensionCount)))
       .drop("levelCube")
-      .drop(weightColumnName)
+      .drop("elemPosInPayload")
 
     val remainingData =
       dataWithPositionInPayload
@@ -109,6 +108,8 @@ class SequentialWriter(
     var fileActions = Seq.empty[FileAction]
     var cubeWeights = Map[CubeId, NormalizedWeight]()
     (0 until maxOTreeHeight).foldLeft(dataToWrite) { case (remainingData, level) =>
+      // scalastyle:off println
+      println(s"piecewise sequential indexing for level: $level")
       val (indexedData, levelCubeWeights, dataToIndex) = piecewiseSequentialOTreeIndexing(
         remainingData,
         level,
