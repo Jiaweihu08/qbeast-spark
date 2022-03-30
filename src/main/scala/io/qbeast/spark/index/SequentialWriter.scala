@@ -108,8 +108,6 @@ class SequentialWriter(
     var fileActions = Seq.empty[FileAction]
     var cubeWeights = Map[CubeId, NormalizedWeight]()
     (0 until maxOTreeHeight).foldLeft(dataToWrite) { case (remainingData, level) =>
-      // scalastyle:off println
-      println(s"piecewise sequential indexing for level: $level")
       val (indexedData, levelCubeWeights, dataToIndex) = piecewiseSequentialOTreeIndexing(
         remainingData,
         level,

@@ -221,7 +221,7 @@ private[table] class IndexedTableImpl(
 
     val schema = data.schema
     metadataManager.updateWithTransaction(tableID, schema, append) {
-      if (analyzerImp == "sequential") {
+      if (analyzerImp == "piecewiseSeq") {
         val sequentialWriter = new SequentialWriter(dataWriter, schema, tableID)
         sequentialWriter.piecewiseSequentialWriting(data, indexStatus)
       } else {
