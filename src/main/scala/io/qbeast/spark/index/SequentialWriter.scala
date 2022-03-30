@@ -22,11 +22,7 @@ import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.{DataFrame, SparkSession}
 
-class SequentialWriter(
-    dataWriter: DataWriter[DataFrame, StructType, FileAction],
-    schema: StructType,
-    tableID: QTableID)
-    extends Serializable {
+object SequentialWriter extends Serializable {
   lazy val spark: SparkSession = SparkSession.active
 
   private[index] def piecewiseSequentialOTreeIndexing(
@@ -76,6 +72,9 @@ class SequentialWriter(
   }
 
   def piecewiseSequentialWriting(
+      dataWriter: DataWriter[DataFrame, StructType, FileAction],
+      schema: StructType,
+      tableID: QTableID,
       dataFrame: DataFrame,
       indexStatus: IndexStatus): (TableChanges, IISeq[FileAction]) = {
 

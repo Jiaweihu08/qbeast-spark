@@ -222,8 +222,12 @@ private[table] class IndexedTableImpl(
     val schema = data.schema
     metadataManager.updateWithTransaction(tableID, schema, append) {
       if (analyzerImp == "piecewiseSeq") {
-        val sequentialWriter = new SequentialWriter(dataWriter, schema, tableID)
-        sequentialWriter.piecewiseSequentialWriting(data, indexStatus)
+        SequentialWriter.piecewiseSequentialWriting(
+          dataWriter,
+          schema,
+          tableID,
+          data,
+          indexStatus)
       } else {
         val (qbeastData, tableChanges) =
           indexManager.index(data, indexStatus, analyzerImp)
