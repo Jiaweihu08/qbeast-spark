@@ -39,6 +39,9 @@ object SequentialWriter extends Serializable {
     val dataWithPositionInPayload = dataToIndex
       .withColumn("levelCube", levelCubeString(col(cubeColumnName)))
       .withColumn("elemPosInPayload", rank.over(levelElemWindowSpec))
+//      .queryExecution
+//      .executedPlan
+//      .execute
 
     val levelElems = dataWithPositionInPayload
       .where(s"elemPosInPayload <= $desiredCubeSize")
@@ -56,6 +59,9 @@ object SequentialWriter extends Serializable {
       }
       .collect()
       .toMap
+
+    // scalastyle:off println
+    println(s"Level($level) cube weight map: $levelCubeWeights")
 
     val indexedData = levelElems
       .drop(cubeColumnName)
@@ -112,6 +118,12 @@ object SequentialWriter extends Serializable {
         level,
         revision.desiredCubeSize,
         dimensionCount)
+
+      if (levelCubeWeights.isEmpty) {
+        val tableChanges =
+          BroadcastedTableChanges(spaceChanges, indexStatus, cubeWeights, Set.empty[CubeId])
+        return (tableChanges, fileActions.toIndexedSeq)
+      }
 
       val tableChanges =
         BroadcastedTableChanges(spaceChanges, indexStatus, levelCubeWeights, Set.empty[CubeId])
