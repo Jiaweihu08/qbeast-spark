@@ -34,10 +34,22 @@ object SinglePassOTreeDataAnalyzer extends OTreeDataAnalyzer with Serializable {
           if (iterForStats.isEmpty) {
             Seq[CubeWeightAndStats]().iterator
           } else {
-            val partitionColStats = iterForStats.foldLeft(initialColStats) {
+            var partitionColStats = iterForStats.foldLeft(initialColStats) {
               case (colStats, row) =>
                 colStats.map(stats => updateColStats(stats, row))
             }
+
+            val epsilon = 42
+            partitionColStats = partitionColStats.map(stats =>
+              if (stats.min == stats.max) {
+                if (stats.max + epsilon <= Double.MaxValue) {
+                  stats.copy(max = stats.max + epsilon)
+                } else {
+                  stats.copy(min = stats.min - epsilon)
+                }
+              } else {
+                stats
+              })
 
             colStatsAcc.add(partitionColStats)
 
@@ -120,31 +132,47 @@ object SinglePassOTreeDataAnalyzer extends OTreeDataAnalyzer with Serializable {
               val (cubeFrom, cubeTo) = cubeGlobalCoordinates(i)
               val candidateFrom = candidate.from.coordinates(i)
               val candidateTo = candidate.to.coordinates(i)
+              // scalastyle:off println
               assert(candidateFrom < cubeTo && cubeFrom < candidateTo)
+//              if (!(candidateFrom < cubeTo && cubeFrom < candidateTo)) {
+//                println(s"""Dimension not overlapping when it should:
+//                     |candidate coords: ($candidateFrom, $candidateTo)
+//                     |cube global coords: ($cubeFrom, $cubeTo)
+//                     |""".stripMargin)
+//              }
               val cubeDimWidth = cubeTo - cubeFrom
+//              if (cubeDimWidth == 0.0) {
+//                println(s"""Non-existent cubeDimWidth.
+//                     |We didn't solve the problem by extending the range:
+//                     |cube global coords: ($cubeFrom, $cubeTo)
+//                     |""".stripMargin)
+//              }
               val dimOverlap = (candidateTo - cubeFrom)
                 .min(cubeTo - candidateFrom)
                 .min(cubeDimWidth) / cubeDimWidth
-              if (dimOverlap.isNaN) {
-                // scalastyle:off println
-                println(s"""cube dim coords:($cubeFrom, $cubeTo),
-                     |candidate dim coords: ($candidateFrom, $candidateTo)""".stripMargin)
-                println(s"ColStats: $localColStats, $globalColStats")
-              }
+//              if (dimOverlap.isNaN) {
+//                println("Cube original ranges:")
+//                cube.from.coordinates.zip(cube.to.coordinates).foreach(println)
+//                println(s"cube dim coords:($cubeFrom, $cubeTo)")
+//                println("candidate dim coords: ($candidateFrom, $candidateTo")
+//                println(s"localColStats: $localColStats, globalColStats: $globalColStats")
+//              }
               dimOverlap
             }
             val candidateOverlap = dimensionOverlaps.product
-            if (!(candidateOverlap > 0.0)) {
-              println(s"Non-existent overlap: $dimensionOverlaps")
-            }
+            assert(candidateOverlap > 0.0)
+//            if (!(candidateOverlap > 0.0)) {
+//              println(
+//                s"Non-existent overlap: $dimensionOverlaps, candidate overlap: $candidateOverlap")
+//            }
             cubeOverlaps += candidateOverlap
             CubeNormalizedWeight(cubeBytes, cubeWeight / candidateOverlap)
           }
           // Make sure that all overlapping cubes from the same depth are found
-//          assert(math.abs(1.0 - cubeOverlaps) < 1e-15)
-          if (math.abs(1.0 - cubeOverlaps) > 1e-15) {
-            println(s"This is not working !!!!!!, overlap: $cubeOverlaps")
-          }
+          assert(math.abs(1.0 - cubeOverlaps) < 1e-15)
+//          if (math.abs(1.0 - cubeOverlaps) > 1e-15) {
+//            println(s"This is not working !!!!!!, overlap: $cubeOverlaps")
+//          }
           overlappingCubeWeights.filterNot(_.normalizedWeight.isNaN)
         }
     }
