@@ -33,15 +33,15 @@ class SingleVsDoublePassAnalyzerComparison extends QbeastIntegrationTestSpec {
         // scalastyle:off println
         val metricsSingle = QbeastTable.forPath(spark, singlePath).getIndexMetrics()
         println(metricsSingle)
-        metricsSingle.cubeStatuses.values.toList
-          .map(c => (c.cubeId, c.normalizedWeight, c.files.map(f => f.elementCount).sum))
-          .foreach(println)
-
-        val metricsDouble = QbeastTable.forPath(spark, singlePath).getIndexMetrics()
+//      metricsSingle.cubeStatuses.values.toList
+//        .map(c => (c.cubeId, c.normalizedWeight, c.files.map(f => f.elementCount).sum))
+//        .foreach(println)
+//
+        val metricsDouble = QbeastTable.forPath(spark, doublePath).getIndexMetrics()
         println(metricsDouble)
-        metricsSingle.cubeStatuses.values.toList
-          .map(c => (c.cubeId, c.normalizedWeight, c.files.map(f => f.elementCount).sum))
-          .foreach(println)
+//      metricsDouble.cubeStatuses.values.toList
+//        .map(c => (c.cubeId, c.normalizedWeight, c.files.map(f => f.elementCount).sum))
+//        .foreach(println)
 
         val qdf = spark.read.format("qbeast").load(singlePath)
         df.count() shouldBe qdf.count()
