@@ -21,13 +21,13 @@ class SingleVsDoublePassAnalyzerComparison extends QbeastIntegrationTestSpec {
           .format("qbeast")
           .option("columnsToIndex", "event_time,user_id,price")
           .option("analyzerImp", "single")
-          .option("cubeSize", 50000)
+          .option("cubeSize", 5000)
           .save(singlePath)
 
         df.write
           .format("qbeast")
           .option("columnsToIndex", "event_time,user_id,price")
-          .option("cubeSize", 50000)
+          .option("cubeSize", 5000)
           .save(doublePath)
 
         // scalastyle:off println
