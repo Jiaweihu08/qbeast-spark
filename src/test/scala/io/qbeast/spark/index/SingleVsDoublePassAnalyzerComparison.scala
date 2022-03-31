@@ -10,6 +10,7 @@ class SingleVsDoublePassAnalyzerComparison extends QbeastIntegrationTestSpec {
       {
         val singlePath = tmpDir + "/single"
         val doublePath = tmpDir + "/double"
+        val cs = 5000
 
         val df = spark.read
           .format("csv")
@@ -21,27 +22,27 @@ class SingleVsDoublePassAnalyzerComparison extends QbeastIntegrationTestSpec {
           .format("qbeast")
           .option("columnsToIndex", "event_time,user_id,price")
           .option("analyzerImp", "single")
-          .option("cubeSize", 5000)
+          .option("cubeSize", cs)
           .save(singlePath)
 
         df.write
           .format("qbeast")
           .option("columnsToIndex", "event_time,user_id,price")
-          .option("cubeSize", 5000)
+          .option("cubeSize", cs)
           .save(doublePath)
 
         // scalastyle:off println
         val metricsSingle = QbeastTable.forPath(spark, singlePath).getIndexMetrics()
         println(metricsSingle)
-//      metricsSingle.cubeStatuses.values.toList
-//        .map(c => (c.cubeId, c.normalizedWeight, c.files.map(f => f.elementCount).sum))
-//        .foreach(println)
-//
+//        val singleWeightInfo = metricsSingle.cubeStatuses.values.toList
+//          .filter(c => c.cubeId.depth < 4)
+//          .map(c => (c.cubeId, c.normalizedWeight, c.files.map(f => f.elementCount).sum))
+
         val metricsDouble = QbeastTable.forPath(spark, doublePath).getIndexMetrics()
         println(metricsDouble)
-//      metricsDouble.cubeStatuses.values.toList
-//        .map(c => (c.cubeId, c.normalizedWeight, c.files.map(f => f.elementCount).sum))
-//        .foreach(println)
+//        val doubleWeightInfo = metricsDouble.cubeStatuses.values.toList
+//          .filter(c => c.cubeId.depth < 4)
+//          .map(c => (c.cubeId, c.normalizedWeight, c.files.map(f => f.elementCount).sum))
 
         val qdf = spark.read.format("qbeast").load(singlePath)
         df.count() shouldBe qdf.count()
