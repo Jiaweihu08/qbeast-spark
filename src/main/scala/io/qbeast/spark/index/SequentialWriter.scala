@@ -125,6 +125,7 @@ object SequentialWriter extends Serializable {
         .transform(addRandomWeight(revision))
         .transform(addCubeId(revision, maxOTreeHeight))
 
+    // Unfolding the dataset to write level by level and aggregate metadata
     var fileActions = Seq.empty[FileAction]
     var cubeWeights = Map[CubeId, NormalizedWeight]()
     (0 until maxOTreeHeight).foldLeft(dataToWrite) { case (remainingData, level) =>
