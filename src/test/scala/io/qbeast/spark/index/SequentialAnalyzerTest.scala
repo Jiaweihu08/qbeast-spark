@@ -62,5 +62,7 @@ class SequentialAnalyzerTest extends QbeastIntegrationTestSpec {
         .sortBy(_.cubeId)
         .map(status => (status.cubeId, status.normalizedWeight, status.files.size))
         .foreach(println)
+
+      df.count() shouldBe spark.read.format("qbeast").load(tmpDir).count()
     }
 }
