@@ -1,0 +1,38 @@
+name: Gather Traffic Data via GitHub API
+on:
+  schedule:
+    - cron: '15 18 ** 1'
+
+jobs:
+  gather_views_and_clones:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: action/checkout@v2
+
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v1
+      with:
+        aws-access-key-id: ${{ secrets.AWS_PROD_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_ECR_SECRET_ACCESS_KEY }}
+        aws-region: eu-west-1
+
+    - name: Download views and clone data and upload them to S3
+      env:
+        ACTION_TOKEN: ${{ secrets.TRAFFIC_ACTION_TOKEN }}
+        S3_BUCKET_NAME: ${{ secrets.AWS_S3_TRAFFIC_BUCKET }}
+      run: |
+        view_name=view_$(date "+%Y-%m-%d").json \
+        clone_name=clone_$(date "+%Y-%m-%d").json \
+        curl \
+	        -H "Authorization: token ${ACTION_TOKEN}" \
+	        -H "Accept: application/vnd.github.v3+json" \
+	        https://api.github.com/repos/Qbeast-io/qbeast-spark/traffic/views |
+        jq -c '.views | .[7:15]' > $view_name \
+        curl \
+	        -H "Authorization: token ${ACTION_TOKEN}" \
+	        -H "Accept: application/vnd.github.v3+json" \
+	        https://api.github.com/repos/Qbeast-io/qbeast-spark/traffic/clones |
+        jq -c '.clones | .[7:15]' > $clone_name \
+        aws s3 cp $view_name ${S3_BUCKET_NAME}/views/$view_name \
+        aws s3 cp $clone_name ${S3_BUCKET_NAME}/clones/$clone_name \
