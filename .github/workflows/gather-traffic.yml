@@ -21,17 +21,17 @@ jobs:
         ACTION_TOKEN: ${{ secrets.TRAFFIC_ACTION_TOKEN }}
         S3_BUCKET_NAME: ${{ secrets.AWS_S3_TRAFFIC_BUCKET }}
       run: |
-        view_name=view_$(date "+%Y-%m-%d").json &&
+        view_name=views_$(date "+%Y-%m-%d").json &&
         curl \
             -H 'Authorization: token ${ACTION_TOKEN}' \
             -H 'Accept: application/vnd.github.v3+json' \
             https://api.github.com/repos/Qbeast-io/qbeast-spark/traffic/views |
         jq -c '.views | .[7:15]' > $view_name &&
-        aws s3 cp $view_name ${S3_BUCKET_NAME}/views/$view_name &&
-        clone_name=clone_$(date "+%Y-%m-%d").json &&
+        aws s3 cp $view_name ${S3_BUCKET_NAME}views/$view_name &&
+        clone_name=clones_$(date "+%Y-%m-%d").json &&
         curl \
             -H "Authorization:token ${ACTION_TOKEN}" \
             -H "Accept:application/vnd.github.v3+json" \
             https://api.github.com/repos/Qbeast-io/qbeast-spark/traffic/clones |
         jq -c '.clones | .[7:15]' > $clone_name &&
-        aws s3 cp $clone_name ${S3_BUCKET_NAME}/clones/$clone_name
+        aws s3 cp $clone_name ${S3_BUCKET_NAME}clones/$clone_name
