@@ -50,7 +50,6 @@ object SequentialWriter extends Serializable {
       .join(levelCubeWeightCut, "levelCube")
       .filter(col(weightColumnName) <= col("weightCut"))
       .drop("weightCut")
-      .repartition(col("levelCube"))
 
     // Selecting the number of elements for the current level.
     val levelElemWindowSpec = Window.partitionBy("levelCube").orderBy(weightColumnName)
