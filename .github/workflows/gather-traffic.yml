@@ -1,7 +1,7 @@
 name: Gather Traffic Data via GitHub API
 on:
   schedule:
-    - cron: "*/10 * * * *"
+    - cron: "*/15 * * * *"
 
 jobs:
   gather_views_and_clones:
@@ -21,7 +21,7 @@ jobs:
       run: |
         view_name=views_$(date "+%Y-%m-%d").json &&
         curl \
-            -H 'Authorization: token ${ACTION_TOKEN}' \
+            -H 'Authorization: token ${{ secrets.TRAFFIC_ACTION_TOKEN }}' \
             -H 'Accept: application/vnd.github.v3+json' \
             https://api.github.com/repos/Qbeast-io/qbeast-spark/traffic/views |
         jq -c '.views | .[7:15]' > $view_name &&
@@ -31,7 +31,7 @@ jobs:
       run: |
         clone_name=clones_$(date "+%Y-%m-%d").json &&
         curl \
-            -H "Authorization:token ${ACTION_TOKEN}" \
+            -H "Authorization:token ${{ secrets.TRAFFIC_ACTION_TOKEN }}" \
             -H "Accept:application/vnd.github.v3+json" \
             https://api.github.com/repos/Qbeast-io/qbeast-spark/traffic/clones |
         jq -c '.clones | .[7:15]' > $clone_name &&
