@@ -4,7 +4,7 @@
 package io.qbeast.spark.index
 
 import io.qbeast.IISeq
-import io.qbeast.core.model.{DoubleDataType, OrderedDataType}
+import io.qbeast.core.model.OrderedDataType
 import io.qbeast.core.transform.{HashTransformation, LinearTransformation, Transformation}
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.types.StructType
@@ -68,18 +68,7 @@ object SinglePassColStatsUtils {
           case "LongDataType" =>
             (stats.min.asInstanceOf[Long], stats.max.asInstanceOf[Long])
         }
-        if (minNumber == maxNumber) {
-          val orderedDataType = OrderedDataType(stats.dType)
-          import orderedDataType.ordering._
-
-          val epsilon = 42.0
-          LinearTransformation(
-            minNumber.toDouble() - epsilon,
-            maxNumber.toDouble() + epsilon,
-            DoubleDataType)
-        } else {
-          LinearTransformation(minNumber, maxNumber, OrderedDataType(stats.dType))
-        }
+        LinearTransformation(minNumber, maxNumber, OrderedDataType(stats.dType))
       }
     }.toIndexedSeq
   }
