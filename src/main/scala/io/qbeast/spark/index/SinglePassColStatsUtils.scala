@@ -4,7 +4,7 @@
 package io.qbeast.spark.index
 
 import io.qbeast.IISeq
-import io.qbeast.core.model.OrderedDataType
+import io.qbeast.core.model.{CubeId, OrderedDataType}
 import io.qbeast.core.transform.{HashTransformation, LinearTransformation, Transformation}
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.types.StructType
@@ -91,6 +91,15 @@ object SinglePassColStatsUtils {
         val offset = (local.min - global.min) / gScale
         (from * scale + offset, to * scale + offset)
       }
+    }
+  }
+
+  def hasOverlap(candidate: CubeId, cubeGlobalCoordinates: Seq[(Double, Double)]): Boolean = {
+    // For two cubes to overlap, all dimensions must overlap
+    candidate.from.coordinates.indices.forall { i =>
+      val cubeFrom = cubeGlobalCoordinates(i)._1
+      val cubeTo = cubeGlobalCoordinates(i)._2
+      candidate.from.coordinates(i) < cubeTo && cubeFrom < candidate.to.coordinates(i)
     }
   }
 
