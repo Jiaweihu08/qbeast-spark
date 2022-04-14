@@ -1,6 +1,6 @@
 package io.qbeast.spark.index
 
-import io.qbeast.spark.{QbeastIntegrationTestSpec, QbeastTable}
+import io.qbeast.spark.{QbeastIntegrationTestSpec}
 
 class SingleVsDoublePassAnalyzerComparison extends QbeastIntegrationTestSpec {
   val dataSource = "./src/test/resources/ecommerce100k_2019_Oct.csv"
@@ -10,7 +10,7 @@ class SingleVsDoublePassAnalyzerComparison extends QbeastIntegrationTestSpec {
       {
         val singlePath = tmpDir + "/single"
         val doublePath = tmpDir + "/double"
-        val cs = 50
+        val cs = 2000
 
         val df = spark.read
           .format("csv")
@@ -32,21 +32,20 @@ class SingleVsDoublePassAnalyzerComparison extends QbeastIntegrationTestSpec {
           .save(doublePath)
 
         // scalastyle:off println
-        Seq(singlePath, doublePath).foreach(path => {
-          val metrics = QbeastTable.forPath(spark, path).getIndexMetrics()
-          println(metrics)
-          println(
-            metrics.cubeStatuses.values.toList
-              .filter(c => {
-                val isInnerCube = c.cubeId.children.exists(metrics.cubeStatuses.contains)
-                val exceedsCs = c.files.map(_.elementCount).sum >= cs
-                val largeWeight = c.normalizedWeight >= 1.0
-                !isInnerCube && (exceedsCs || !largeWeight)
-              })
-              .map(c => (c.cubeId, c.normalizedWeight, c.files.map(f => f.elementCount).sum))
-              .size)
-//            .foreach(println)
-        })
+//        Seq(singlePath, doublePath).foreach(path => {
+//          val metrics = QbeastTable.forPath(spark, path).getIndexMetrics()
+//          println(metrics)
+//          val targetMetric = metrics.cubeStatuses.values.toList
+//            .filter(c => {
+//              val isInnerCube = c.cubeId.children.exists(metrics.cubeStatuses.contains)
+//              val exceedsCs = c.files.map(_.elementCount).sum >= cs
+//              val largeWeight = c.normalizedWeight >= 1.0
+//              !isInnerCube && (exceedsCs || !largeWeight)
+//            })
+//            .map(c => (c.cubeId, c.normalizedWeight, c.files.map(f => f.elementCount).sum))
+//          println(s"Mean leaf weight: ${targetMetric.map(_._2).sum / targetMetric.size}")
+//          println(s"Leaf count: ${targetMetric.size}")
+//        })
 
         val qdf = spark.read.format("qbeast").load(singlePath)
         df.count() shouldBe qdf.count()
