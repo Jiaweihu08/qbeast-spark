@@ -81,17 +81,6 @@ object SinglePassOTreeDataAnalyzer extends OTreeDataAnalyzer with Serializable {
         })
     }
 
-  private[index] def hasOverlap(
-      candidate: CubeId,
-      cubeGlobalCoordinates: Seq[(Double, Double)]): Boolean = {
-    // For two cubes to overlap, all dimensions must overlap
-    candidate.from.coordinates.indices.forall { i =>
-      val cubeFrom = cubeGlobalCoordinates(i)._1
-      val cubeTo = cubeGlobalCoordinates(i)._2
-      candidate.from.coordinates(i) < cubeTo && cubeFrom < candidate.to.coordinates(i)
-    }
-  }
-
   private[index] def toGlobalCubeWeights(
       partitionedEstimatedCubeWeights: Array[CubeWeightAndStats],
       dimensionCount: Int,
@@ -111,42 +100,40 @@ object SinglePassOTreeDataAnalyzer extends OTreeDataAnalyzer with Serializable {
           Seq(CubeNormalizedWeight(cubeBytes, cubeWeight))
         } else {
           val cube = CubeId(dimensionCount, cubeBytes)
+          // Compute cube's global coordinates
           val cubeGlobalCoordinates = toGlobalCoordinates(
             cube.from.coordinates,
             cube.to.coordinates,
             localColStats,
             globalColStats)
 
-          // Find the overlapping cubes that are from cube.depth. Considering only
-          // the useful branches at each iteration.
+          // Find the global-level overlapping cubes that are from the same level as cube.depth.
+          // Only the useful branches are considered at each iteration.
           val overlappingCubes = (0 until cube.depth).foldLeft(Seq(CubeId.root(dimensionCount))) {
             case (candidates, _) =>
               candidates.flatMap(_.children.filter(c => hasOverlap(c, cubeGlobalCoordinates)))
           }
 
-          // Compute overlaps for each overlapping cube
+          // Compute overlapping cube weights from overlapping cubes
           var cubeOverlaps = 0.0
-          val overlappingCubeWeights = overlappingCubes.map { candidate =>
-            val dimensionOverlaps = cubeGlobalCoordinates.indices.map { i =>
-              val (cubeFrom, cubeTo) = cubeGlobalCoordinates(i)
-              val candidateFrom = candidate.from.coordinates(i)
-              val candidateTo = candidate.to.coordinates(i)
-              // scalastyle:off println
-              assert(candidateFrom < cubeTo && cubeFrom < candidateTo)
-              val cubeDimWidth = cubeTo - cubeFrom
-              val dimOverlap = (candidateTo - cubeFrom)
-                .min(cubeTo - candidateFrom)
-                .min(cubeDimWidth) / cubeDimWidth
-              dimOverlap
+          val overlappingCubeWeights = overlappingCubes
+            .map { candidate =>
+              val overlap = cubeGlobalCoordinates.indices.map { i =>
+                val (cubeFrom, cubeTo) = cubeGlobalCoordinates(i)
+                val candidateFrom = candidate.from.coordinates(i)
+                val candidateTo = candidate.to.coordinates(i)
+                val cubeDimWidth = cubeTo - cubeFrom
+                assert(candidateFrom < cubeTo && cubeFrom < candidateTo)
+                (candidateTo - cubeFrom)
+                  .min(cubeTo - candidateFrom)
+                  .min(cubeDimWidth) / cubeDimWidth
+              }.product
+
+              cubeOverlaps += overlap
+              CubeNormalizedWeight(candidate.bytes, cubeWeight / overlap)
             }
-            val candidateOverlap = dimensionOverlaps.product
-            assert(candidateOverlap > 0.0)
-            cubeOverlaps += candidateOverlap
-            CubeNormalizedWeight(cubeBytes, cubeWeight / candidateOverlap)
-          }
-          // Make sure that all overlapping cubes from the same depth are found
           assert(math.abs(1.0 - cubeOverlaps) < 1e-15)
-          overlappingCubeWeights.filterNot(_.normalizedWeight.isNaN)
+          overlappingCubeWeights
         }
     }
   }
@@ -196,13 +183,12 @@ object SinglePassOTreeDataAnalyzer extends OTreeDataAnalyzer with Serializable {
         .collect()
 
     val globalColStats = globalColStatsAcc.value
-    // Map partition cube weights to global cube weights
-
-    val globalEstimatedCubeWeights =
-      toGlobalCubeWeights(partitionedEstimatedCubeWeights, columnsToIndex.size, globalColStats)
-
     val transformations = getTransformations(globalColStats)
     val lastRevision = indexStatus.revision.copy(transformations = transformations)
+
+    // Map partition cube weights to global cube weights
+    val globalEstimatedCubeWeights =
+      toGlobalCubeWeights(partitionedEstimatedCubeWeights, columnsToIndex.size, globalColStats)
 
     // Compute the overall estimated cube weights
     val estimatedCubeWeights: Map[CubeId, NormalizedWeight] =
