@@ -34,22 +34,21 @@ object SinglePassOTreeDataAnalyzer extends OTreeDataAnalyzer with Serializable {
           if (iterForStats.isEmpty) {
             Seq[CubeWeightAndStats]().iterator
           } else {
-            var partitionColStats = iterForStats.foldLeft(initialColStats) {
-              case (colStats, row) =>
+            val epsilon = 42.0
+            val partitionColStats = iterForStats
+              .foldLeft(initialColStats) { case (colStats, row) =>
                 colStats.map(stats => updateColStats(stats, row))
-            }
-
-            val epsilon = 42
-            partitionColStats = partitionColStats.map(stats =>
-              if (stats.min == stats.max) {
-                if (stats.max + epsilon <= Double.MaxValue) {
-                  stats.copy(max = stats.max + epsilon)
+              }
+              .map(stats =>
+                if (stats.min == stats.max) {
+                  if (stats.max + epsilon < Double.MaxValue) {
+                    stats.copy(max = stats.max + epsilon)
+                  } else {
+                    stats.copy(min = stats.min - epsilon)
+                  }
                 } else {
-                  stats.copy(min = stats.min - epsilon)
-                }
-              } else {
-                stats
-              })
+                  stats
+                })
 
             colStatsAcc.add(partitionColStats)
 
