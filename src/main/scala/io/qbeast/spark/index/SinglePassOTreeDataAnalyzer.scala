@@ -209,8 +209,7 @@ object SinglePassOTreeDataAnalyzer extends OTreeDataAnalyzer with Serializable {
     val estimatedCubeWeights: Map[CubeId, NormalizedWeight] =
       globalEstimatedCubeWeights
         .groupBy(cw => lastRevision.createCubeId(cw.cubeBytes))
-        .mapValues(cubeWeights =>
-          cubeWeights.size.toDouble / cubeWeights.map(1.0 / _.normalizedWeight).sum)
+        .mapValues(cubeWeights => 1.0 / cubeWeights.map(1.0 / _.normalizedWeight).sum)
 
     val revChange = Some(
       RevisionChange(
