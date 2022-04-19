@@ -24,7 +24,7 @@ object SequentialDataAnalyzer extends OTreeDataAnalyzer with Serializable {
       elementCount: Long,
       desiredCubeSize: Long,
       dimensionCount: Int): Int = {
-    val securitySurplus = 3
+    val securitySurplus = 10
 
     val maxFanout = math.pow(2, dimensionCount)
     val cubeCount = elementCount / desiredCubeSize
