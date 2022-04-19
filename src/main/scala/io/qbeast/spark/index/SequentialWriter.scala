@@ -41,7 +41,7 @@ object SequentialWriter extends Serializable {
     val levelCubeWeightCut = leveledData
       .groupBy("levelCube")
       .count()
-      .select(col("levelCube"), lit(desiredCubeSize * 1.1) / col("count"))
+      .select(col("levelCube"), lit(desiredCubeSize * 2) / col("count"))
       .map(row => (row.getString(0), Weight(row.getDouble(1)).value))
       .toDF("levelCube", "weightCut")
 
@@ -129,29 +129,36 @@ object SequentialWriter extends Serializable {
     // Unfolding the dataset to write level by level and aggregate metadata
     var fileActions = Seq.empty[FileAction]
     var cubeWeights = Map[CubeId, NormalizedWeight]()
-    (0 until maxOTreeHeight).foldLeft(dataToWrite) { case (remainingData, level) =>
+    var tableChanges =
+      BroadcastedTableChanges(spaceChanges, indexStatus, cubeWeights, Set.empty[CubeId])
+
+    var remainingData = dataToWrite
+    var continue = true
+    var level = 0
+
+    while (true) {
       val (indexedData, levelCubeWeights, dataToIndex) = piecewiseSequentialOTreeIndexing(
         remainingData,
         level,
         revision.desiredCubeSize,
         dimensionCount)
 
+      tableChanges =
+        BroadcastedTableChanges(spaceChanges, indexStatus, cubeWeights, Set.empty[CubeId])
+
       if (levelCubeWeights.isEmpty) {
-        val tableChanges =
-          BroadcastedTableChanges(spaceChanges, indexStatus, cubeWeights, Set.empty[CubeId])
         return (tableChanges, fileActions.toIndexedSeq)
       }
 
-      val tableChanges =
-        BroadcastedTableChanges(spaceChanges, indexStatus, levelCubeWeights, Set.empty[CubeId])
-
       cubeWeights ++= levelCubeWeights
       fileActions ++= dataWriter.write(tableID, schema, indexedData, tableChanges)
-      dataToIndex
+      remainingData = dataToIndex
+      level += 1
+      if (level > maxOTreeHeight) {
+        continue = false
+      }
     }
-    (
-      BroadcastedTableChanges(spaceChanges, indexStatus, cubeWeights, Set.empty[CubeId]),
-      fileActions.toIndexedSeq)
+    (tableChanges, fileActions.toIndexedSeq)
   }
 
 }
