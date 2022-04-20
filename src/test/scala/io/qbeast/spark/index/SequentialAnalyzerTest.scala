@@ -44,12 +44,13 @@ class SequentialAnalyzerTest extends QbeastIntegrationTestSpec {
           .option("inferSchema", true)
           .load(path)
 
-      df.write
-        .format("qbeast")
-        .option("columnsToIndex", "event_time,user_id,price")
-        .option("cubeSize", 5000)
-        .option("analyzerImp", "piecewiseSeq")
-        .save(tmpDir)
+      spark.time(
+        df.write
+          .format("qbeast")
+          .option("columnsToIndex", "event_time,user_id,price")
+          .option("cubeSize", 5000)
+          .option("analyzerImp", "piecewiseSeq")
+          .save(tmpDir))
 
       // scalastyle:off println
       val metrics = QbeastTable
