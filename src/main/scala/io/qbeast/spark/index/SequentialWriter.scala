@@ -22,25 +22,28 @@ import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.{DataFrame, SparkSession}
 
-class MaxWeightMapper(levelCubeWeightMap: Map[CubeId, Int]) {
+// scalastyle:off
+class MaxWeightMapper(levelCubeWeightMap: Map[String, Int]) extends Serializable {
 
-  val cubeWeightUdf: UserDefinedFunction = {
+  val isCubeFromLevel: UserDefinedFunction = {
+    udf((levelCube: String) => levelCubeWeightMap.contains(levelCube))
+  }
+
+  val levelWeightUdf: UserDefinedFunction = {
     udf((levelCube: String, dimensionCount: Int) => {
-      val cube = CubeId(dimensionCount, levelCube)
-      if (levelCubeWeightMap.contains(cube)) {
-        levelCubeWeightMap(cube)
-      } else {
-        Int.MinValue
-      }
+      levelCubeWeightMap(levelCube)
     })
   }
 
   def filterPreviousRecords(level: Int, dimensionCount: Int): DataFrame => DataFrame =
     (dataToWrite: DataFrame) => {
       dataToWrite
-        .withColumn("levelCube", col(cubeColumnName).substr(0, level))
-        .withColumn("maxWeight", cubeWeightUdf(col("levelCube"), lit(dimensionCount)))
-        .filter(col(weightColumnName) >= col("maxWeight"))
+        .withColumn(("levelCube"), col(cubeColumnName).substr(0, level))
+        .filter(isCubeFromLevel(col("levelCube")))
+        .withColumn("maxWeight", levelWeightUdf(col("levelCube"), lit(dimensionCount)))
+        .filter(col(weightColumnName) > col("maxWeight"))
+        .drop("levelCube")
+        .drop("maxWeight")
     }
 
 }
@@ -52,7 +55,7 @@ object SequentialWriter extends Serializable {
       dataToIndex: DataFrame,
       level: Int,
       desiredCubeSize: Int,
-      dimensionCount: Int): (DataFrame, Map[CubeId, Int], DataFrame) = {
+      dimensionCount: Int): (DataFrame, Map[String, Int]) = {
     import spark.implicits._
 
     // DF with cube string corresponding to the current level
@@ -85,14 +88,12 @@ object SequentialWriter extends Serializable {
     // Computing level cube weights
     val levelCubeWeightsWindowSpec =
       Window.partitionBy("levelCube").orderBy(desc(weightColumnName))
-    val cubeWeights = levelElems
+    val cubeWeightMap = levelElems
       .withColumn("weightRank", rank.over(levelCubeWeightsWindowSpec))
       .select(col("levelCube"), col(weightColumnName).as("maxWeight"))
       .where("weightRank == 1")
-
-    val levelCubeWeightMap = cubeWeights
       .map { row =>
-        val cube = CubeId(dimensionCount, row.getAs[String]("levelCube"))
+        val cube = row.getAs[String]("levelCube")
         val weight = row.getAs[Int]("maxWeight")
         (cube, weight)
       }
@@ -106,19 +107,7 @@ object SequentialWriter extends Serializable {
       .drop("levelCube")
       .drop("posInPayload")
 
-    // Data for the next iteration
-    val remainingData = leveledData
-      .join(cubeWeights, "levelCube")
-      .where(col(weightColumnName) > col("maxWeight"))
-      .drop("levelCube")
-      .drop("posInPayload")
-      .drop("maxWeight")
-
-    // scalastyle:off println
-    println(s"level: $level")
-    dataToIndex.orderBy(weightColumnName).show(20)
-    remainingData.orderBy(weightColumnName).show(20)
-    (indexedData, levelCubeWeightMap, remainingData)
+    (indexedData, cubeWeightMap)
   }
 
   def piecewiseSequentialWriting(
@@ -165,7 +154,7 @@ object SequentialWriter extends Serializable {
     var level = 0
 
     while (true) {
-      val (indexedData, levelCubeWeights, dataToIndex) = piecewiseSequentialOTreeIndexing(
+      val (indexedData, levelCubeWeights) = piecewiseSequentialOTreeIndexing(
         remainingData,
         level,
         revision.desiredCubeSize,
@@ -178,18 +167,14 @@ object SequentialWriter extends Serializable {
         return (tableChanges, fileActions.toIndexedSeq)
       }
 
-      val levelDataEliminator = new MaxWeightMapper(levelCubeWeights)
-      val testFiltering = {
-        dataToWrite.transform(levelDataEliminator.filterPreviousRecords(level, dimensionCount))
-      }
-
-      // scalastyle:off println
-      println(s"remaining data count: ${dataToIndex.count()}")
-      println(s"testFiltering size: ${testFiltering.count()}")
-
-      cubeWeights ++= levelCubeWeights.mapValues(w => NormalizedWeight(Weight(w)))
       fileActions ++= dataWriter.write(tableID, schema, indexedData, tableChanges)
-      remainingData = dataToIndex
+
+      val levelDataEliminator = new MaxWeightMapper(levelCubeWeights)
+      remainingData =
+        dataToWrite.transform(levelDataEliminator.filterPreviousRecords(level, dimensionCount))
+      cubeWeights ++= levelCubeWeights.map { case (k, v) =>
+        (CubeId(dimensionCount, k), NormalizedWeight(Weight(v)))
+      }
       level += 1
       if (level > maxOTreeHeight) {
         continue = false
