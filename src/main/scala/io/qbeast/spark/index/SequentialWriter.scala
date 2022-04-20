@@ -17,10 +17,33 @@ import io.qbeast.spark.index.SequentialDataAnalyzer.{
   cubeStringToBytes
 }
 import org.apache.spark.sql.delta.actions.FileAction
-import org.apache.spark.sql.expressions.Window
+import org.apache.spark.sql.expressions.{UserDefinedFunction, Window}
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.{DataFrame, SparkSession}
+
+class MaxWeightMapper(levelCubeWeightMap: Map[CubeId, Int]) {
+
+  val cubeWeightUdf: UserDefinedFunction = {
+    udf((levelCube: String, dimensionCount: Int) => {
+      val cube = CubeId(dimensionCount, levelCube)
+      if (levelCubeWeightMap.contains(cube)) {
+        levelCubeWeightMap(cube)
+      } else {
+        Int.MinValue
+      }
+    })
+  }
+
+  def filterPreviousRecords(level: Int, dimensionCount: Int): DataFrame => DataFrame =
+    (dataToWrite: DataFrame) => {
+      dataToWrite
+        .withColumn("levelCube", col(cubeColumnName).substr(0, level))
+        .withColumn("maxWeight", cubeWeightUdf(col("levelCube"), lit(dimensionCount)))
+        .filter(col(weightColumnName) >= col("maxWeight"))
+    }
+
+}
 
 object SequentialWriter extends Serializable {
   lazy val spark: SparkSession = SparkSession.active
@@ -29,7 +52,7 @@ object SequentialWriter extends Serializable {
       dataToIndex: DataFrame,
       level: Int,
       desiredCubeSize: Int,
-      dimensionCount: Int): (DataFrame, Map[CubeId, NormalizedWeight], DataFrame) = {
+      dimensionCount: Int): (DataFrame, Map[CubeId, Int], DataFrame) = {
     import spark.implicits._
 
     // DF with cube string corresponding to the current level
@@ -45,7 +68,8 @@ object SequentialWriter extends Serializable {
       .map(row => (row.getString(0), Weight(row.getDouble(1)).value))
       .toDF("levelCube", "weightCut")
 
-    // Limiting the data to work on by applying weight cut.
+    // Limiting the data to work on by applying weight cut and repartition
+    // the data according to their cube
     val preFiltered = leveledData
       .join(levelCubeWeightCut, "levelCube")
       .filter(col(weightColumnName) <= col("weightCut"))
@@ -63,14 +87,14 @@ object SequentialWriter extends Serializable {
       Window.partitionBy("levelCube").orderBy(desc(weightColumnName))
     val cubeWeights = levelElems
       .withColumn("weightRank", rank.over(levelCubeWeightsWindowSpec))
-      .select(col("levelCube"), col(weightColumnName).as("weightCut"))
+      .select(col("levelCube"), col(weightColumnName).as("maxWeight"))
       .where("weightRank == 1")
 
     val levelCubeWeightMap = cubeWeights
       .map { row =>
         val cube = CubeId(dimensionCount, row.getAs[String]("levelCube"))
-        val weight = Weight(row.getAs[Int]("weightCut"))
-        (cube, NormalizedWeight(weight))
+        val weight = row.getAs[Int]("maxWeight")
+        (cube, weight)
       }
       .collect()
       .toMap
@@ -85,11 +109,15 @@ object SequentialWriter extends Serializable {
     // Data for the next iteration
     val remainingData = leveledData
       .join(cubeWeights, "levelCube")
-      .where(col(weightColumnName) > col("weightCut"))
+      .where(col(weightColumnName) > col("maxWeight"))
       .drop("levelCube")
       .drop("posInPayload")
-      .drop("weightCut")
+      .drop("maxWeight")
 
+    // scalastyle:off println
+    println(s"level: $level")
+    dataToIndex.orderBy(weightColumnName).show(20)
+    remainingData.orderBy(weightColumnName).show(20)
     (indexedData, levelCubeWeightMap, remainingData)
   }
 
@@ -150,7 +178,16 @@ object SequentialWriter extends Serializable {
         return (tableChanges, fileActions.toIndexedSeq)
       }
 
-      cubeWeights ++= levelCubeWeights
+      val levelDataEliminator = new MaxWeightMapper(levelCubeWeights)
+      val testFiltering = {
+        dataToWrite.transform(levelDataEliminator.filterPreviousRecords(level, dimensionCount))
+      }
+
+      // scalastyle:off println
+      println(s"remaining data count: ${dataToIndex.count()}")
+      println(s"testFiltering size: ${testFiltering.count()}")
+
+      cubeWeights ++= levelCubeWeights.mapValues(w => NormalizedWeight(Weight(w)))
       fileActions ++= dataWriter.write(tableID, schema, indexedData, tableChanges)
       remainingData = dataToIndex
       level += 1
