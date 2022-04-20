@@ -30,10 +30,10 @@ object SinglePassOTreeDataAnalyzer extends OTreeDataAnalyzer with Serializable {
 
       selected
         .mapPartitions(rows => {
-          val (iterForStats, iterForCubeWeights) = rows.duplicate
-          if (iterForStats.isEmpty) {
+          if (rows.isEmpty) {
             Seq[CubeWeightAndStats]().iterator
           } else {
+            val (iterForStats, iterForCubeWeights) = rows.duplicate
             val epsilon = 42.0
             val partitionColStats = iterForStats
               .foldLeft(initialColStats) { case (colStats, row) =>
