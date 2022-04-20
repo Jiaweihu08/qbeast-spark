@@ -19,25 +19,28 @@ class SingleVsDoublePassAnalyzerComparison extends QbeastIntegrationTestSpec {
           .option("inferSchema", true)
           .load(dataSource)
 
-        df.write
-          .format("qbeast")
-          .option("columnsToIndex", "event_time,user_id,price,product_id")
-          .option("analyzerImp", "piecewiseSeq")
-          .option("cubeSize", cs)
-          .save(sequentialPath)
+        spark.time(
+          df.write
+            .format("qbeast")
+            .option("columnsToIndex", "event_time,user_id,price,product_id")
+            .option("analyzerImp", "piecewiseSeq")
+            .option("cubeSize", cs)
+            .save(sequentialPath))
 
-        df.write
-          .format("qbeast")
-          .option("columnsToIndex", "event_time,user_id,price,product_id")
-          .option("analyzerImp", "single")
-          .option("cubeSize", cs)
-          .save(singlePath)
+        spark.time(
+          df.write
+            .format("qbeast")
+            .option("columnsToIndex", "event_time,user_id,price,product_id")
+            .option("analyzerImp", "single")
+            .option("cubeSize", cs)
+            .save(singlePath))
 
-        df.write
-          .format("qbeast")
-          .option("columnsToIndex", "event_time,user_id,price,product_id")
-          .option("cubeSize", cs)
-          .save(doublePath)
+        spark.time(
+          df.write
+            .format("qbeast")
+            .option("columnsToIndex", "event_time,user_id,price,product_id")
+            .option("cubeSize", cs)
+            .save(doublePath))
 
         // scalastyle:off println
         Seq(sequentialPath, singlePath, doublePath).foreach(path => {
