@@ -67,7 +67,7 @@ object SequentialWriter extends Serializable {
     val levelCubeWeightCut = leveledData
       .groupBy("levelCube")
       .count()
-      .select(col("levelCube"), lit(desiredCubeSize * 2) / col("count"))
+      .select(col("levelCube"), lit(desiredCubeSize * 1.5) / col("count"))
       .map(row => (row.getString(0), Weight(row.getDouble(1)).value))
       .toDF("levelCube", "weightCut")
 
@@ -106,6 +106,19 @@ object SequentialWriter extends Serializable {
       .withColumn(cubeColumnName, cubeStringToBytes(col("levelCube"), lit(dimensionCount)))
       .drop("levelCube")
       .drop("posInPayload")
+
+//    levelElems
+//      .groupBy("levelCube")
+//      .agg(max(weightColumnName).alias("maxWeight"), count(weightColumnName).alias("count"))
+//      .orderBy("maxWeight")
+//      .map(row => {
+//        val cube = row.getAs[String]("levelCube")
+//        val weight = Weight(row.getAs[Int]("maxWeight")).fraction
+//        val count = row.getAs[Long]("count")
+//        (cube, weight, count)
+//      })
+//      .toDF("levelCube", "maxWeightFraction", "cubeSize")
+//      .show()
 
     (indexedData, cubeWeightMap)
   }
@@ -160,21 +173,27 @@ object SequentialWriter extends Serializable {
         revision.desiredCubeSize,
         dimensionCount)
 
-      tableChanges =
-        BroadcastedTableChanges(spaceChanges, indexStatus, cubeWeights, Set.empty[CubeId])
-
+      // If no cubeWeights is returned, it means that the input remainingData is empty
+      // Process finished
       if (levelCubeWeights.isEmpty) {
         return (tableChanges, fileActions.toIndexedSeq)
       }
 
-      fileActions ++= dataWriter.write(tableID, schema, indexedData, tableChanges)
-
-      val levelDataEliminator = new MaxWeightMapper(levelCubeWeights)
-      remainingData =
-        dataToWrite.transform(levelDataEliminator.filterPreviousRecords(level, dimensionCount))
+      // Add levelCubeWeights and write the level cubes
       cubeWeights ++= levelCubeWeights.map { case (k, v) =>
         (CubeId(dimensionCount, k), NormalizedWeight(Weight(v)))
       }
+      tableChanges =
+        BroadcastedTableChanges(spaceChanges, indexStatus, cubeWeights, Set.empty[CubeId])
+
+      // Writing level cubes
+      fileActions ++= dataWriter.write(tableID, schema, indexedData, tableChanges)
+
+      // Filter dataToWrite to get the remainingData
+      val levelDataEliminator = new MaxWeightMapper(levelCubeWeights)
+      remainingData =
+        dataToWrite.transform(levelDataEliminator.filterPreviousRecords(level, dimensionCount))
+
       level += 1
       if (level > maxOTreeHeight) {
         continue = false
