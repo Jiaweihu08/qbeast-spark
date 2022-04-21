@@ -28,10 +28,14 @@ class SequentialAnalyzerTest extends QbeastIntegrationTestSpec {
 
       println(metrics)
 
-      metrics.cubeStatuses.values.toList
-        .sortBy(_.cubeId)
-        .map(status => (status.cubeId, status.normalizedWeight, status.files.size))
+      metrics.cubeStatuses
+        .groupBy(cw => cw._1.depth)
+        .mapValues(m => m.values.map(st => st.maxWeight.fraction).sum / m.size)
+        .toSeq
+        .sortBy(_._1)
         .foreach(println)
+
+      df.count() shouldBe spark.read.format("qbeast").load(tmpDir).count()
     }
 
   it should "write data correctly using piecewise Sequential imp and show metrics" in
@@ -59,10 +63,11 @@ class SequentialAnalyzerTest extends QbeastIntegrationTestSpec {
 
       println(metrics)
 
-      metrics.cubeStatuses.values.toList
-        .sortBy(_.cubeId)
-        .map(status =>
-          (status.cubeId, status.normalizedWeight, status.files.map(_.elementCount).sum))
+      metrics.cubeStatuses
+        .groupBy(cw => cw._1.depth)
+        .mapValues(m => m.values.map(st => st.maxWeight.fraction).sum / m.size)
+        .toSeq
+        .sortBy(_._1)
         .foreach(println)
 
       df.count() shouldBe spark.read.format("qbeast").load(tmpDir).count()
