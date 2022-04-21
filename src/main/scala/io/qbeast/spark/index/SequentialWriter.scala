@@ -67,7 +67,7 @@ object SequentialWriter extends Serializable {
     val levelCubeWeightCut = leveledData
       .groupBy("levelCube")
       .count()
-      .select(col("levelCube"), lit(desiredCubeSize * 1.5) / col("count"))
+      .select(col("levelCube"), lit(desiredCubeSize * 2.0) / col("count"))
       .map(row => (row.getString(0), Weight(row.getDouble(1)).value))
       .toDF("levelCube", "weightCut")
 
