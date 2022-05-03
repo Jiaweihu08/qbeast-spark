@@ -15,9 +15,7 @@ object SinglePassOTreeDataAnalyzer extends OTreeDataAnalyzer with Serializable {
 
   private[index] def estimatePartitionCubeWeights(
       numElements: Long,
-      initialColStats: Seq[ColStats],
       colStatsAcc: ColStatsAccumulator,
-      revision: Revision,
       indexStatus: IndexStatus,
       isReplication: Boolean): DataFrame => Dataset[CubeWeightAndStats] =
     (selected: DataFrame) => {
@@ -36,7 +34,7 @@ object SinglePassOTreeDataAnalyzer extends OTreeDataAnalyzer with Serializable {
             val (iterForStats, iterForCubeWeights) = rows.duplicate
             val epsilon = 42.0
             val partitionColStats = iterForStats
-              .foldLeft(initialColStats) { case (colStats, row) =>
+              .foldLeft(colStatsAcc.value) { case (colStats, row) =>
                 colStats.map(stats => updateColStats(stats, row))
               }
               .map(stats =>
@@ -53,7 +51,7 @@ object SinglePassOTreeDataAnalyzer extends OTreeDataAnalyzer with Serializable {
             colStatsAcc.add(partitionColStats)
 
             val partitionRevision =
-              revision.copy(transformations = getTransformations(partitionColStats))
+              indexStatus.revision.copy(transformations = getTransformations(partitionColStats))
 
             val weights =
               new CubeWeightsBuilder(
@@ -165,21 +163,14 @@ object SinglePassOTreeDataAnalyzer extends OTreeDataAnalyzer with Serializable {
     val selected = weightedDataFrame
       .select(cols.map(col): _*)
 
-    val initialColStats = initializeColStats(columnsToIndex, selected.schema)
-    val globalColStatsAcc = new ColStatsAccumulator(initialColStats)
+    val globalColStatsAcc = new ColStatsAccumulator(
+      initializeColStats(columnsToIndex, selected.schema))
     sparkContext.register(globalColStatsAcc, "globalColStatsAcc")
 
     // Estimate the cube weights at partition level
     val partitionedEstimatedCubeWeights =
       selected
-        .transform(
-          estimatePartitionCubeWeights(
-            0,
-            initialColStats,
-            globalColStatsAcc,
-            indexStatus.revision,
-            indexStatus,
-            isReplication))
+        .transform(estimatePartitionCubeWeights(0, globalColStatsAcc, indexStatus, isReplication))
         .collect()
 
     val globalColStats = globalColStatsAcc.value
@@ -187,8 +178,16 @@ object SinglePassOTreeDataAnalyzer extends OTreeDataAnalyzer with Serializable {
     val lastRevision = indexStatus.revision.copy(transformations = transformations)
 
     // Map partition cube weights to global cube weights
+    val startTime = System.currentTimeMillis()
+
     val globalEstimatedCubeWeights =
       toGlobalCubeWeights(partitionedEstimatedCubeWeights, columnsToIndex.size, globalColStats)
+
+    val runtime = System.currentTimeMillis() - startTime
+    // scalastyle:off
+    println(">>>>>>>>>>>>>>\n")
+    println(s"GREP: toGlobalCubeWeights took $runtime ms")
+    println(">>>>>>>>>>>>>>\n")
 
     // Compute the overall estimated cube weights
     val estimatedCubeWeights: Map[CubeId, NormalizedWeight] =
