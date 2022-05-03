@@ -107,19 +107,6 @@ object SequentialWriter extends Serializable {
       .drop("levelCube")
       .drop("posInPayload")
 
-//    levelElems
-//      .groupBy("levelCube")
-//      .agg(max(weightColumnName).alias("maxWeight"), count(weightColumnName).alias("count"))
-//      .orderBy("maxWeight")
-//      .map(row => {
-//        val cube = row.getAs[String]("levelCube")
-//        val weight = Weight(row.getAs[Int]("maxWeight")).fraction
-//        val count = row.getAs[Long]("count")
-//        (cube, weight, count)
-//      })
-//      .toDF("levelCube", "maxWeightFraction", "cubeSize")
-//      .show()
-
     (indexedData, cubeWeightMap)
   }
 
