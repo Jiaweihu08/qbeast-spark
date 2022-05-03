@@ -2,7 +2,7 @@ package io.qbeast.spark.index
 
 import io.qbeast.IISeq
 import io.qbeast.TestClasses._
-import io.qbeast.core.model.{CubeId, IndexStatus, QTableID, Revision}
+import io.qbeast.core.model._
 import io.qbeast.core.transform.{LinearTransformation, Transformer}
 import io.qbeast.spark.QbeastIntegrationTestSpec
 import io.qbeast.spark.index.QbeastColumns.weightColumnName
@@ -18,14 +18,22 @@ import org.apache.spark.sql.{Dataset, SparkSession}
 
 class SinglePassOTreeAnalyzerTest extends QbeastIntegrationTestSpec {
 
-  private def createDF(size: Int, spark: SparkSession): Dataset[T3] = {
+  private def createDFAndStatus(size: Int, spark: SparkSession): (Dataset[T3], IndexStatus) = {
     import spark.implicits._
 
-    0.to(size)
+    val data = 0
+      .to(size)
       .map(i => T3(i, i.toDouble, i.toString, i.toFloat))
       .toDF()
       .as[T3]
 
+    val columnsSchema = data.schema
+    val columnTransformers = createTransformers(columnsSchema)
+    val revision =
+      Revision(0, 1000, QTableID("test"), 1000, columnTransformers, Seq.empty.toIndexedSeq)
+    val indexStatus = IndexStatus(revision, Set.empty)
+
+    (data, indexStatus)
   }
 
   private def createTransformers(columnsSchema: Seq[StructField]): IISeq[Transformer] = {
@@ -35,37 +43,25 @@ class SinglePassOTreeAnalyzerTest extends QbeastIntegrationTestSpec {
   }
 
   it should "estimatePartitionCubeWeights" in withSpark { spark =>
-    val data = createDF(10000, spark)
-    val columnsSchema = data.schema
-    val columnTransformers = createTransformers(columnsSchema)
-
-    val revision =
-      Revision(0, 1000, QTableID("test"), 1000, columnTransformers, Seq.empty.toIndexedSeq)
-    val indexStatus = IndexStatus(revision, Set.empty)
+    val (data, indexStatus) = createDFAndStatus(10000, spark)
 
     // Add weights to DF to index
     val weightedDataFrame =
       data.withColumn(weightColumnName, lit(scala.util.Random.nextInt()))
 
     val columnsToIndex = indexStatus.revision.columnTransformers.map(_.columnName)
-    val cols = columnsToIndex :+ weightColumnName
     val selected = weightedDataFrame
-      .select(cols.map(col): _*)
+      .select((columnsToIndex :+ weightColumnName).map(col): _*)
+      .repartition(5)
 
-    val initialColStats = initializeColStats(columnsToIndex, selected.schema)
-    val globalColStatsAcc = new ColStatsAccumulator(initialColStats)
+    val globalColStatsAcc =
+      new ColStatsAccumulator(initializeColStats(columnsToIndex, selected.schema))
     spark.sparkContext.register(globalColStatsAcc, "globalColStatsAcc")
 
     // Compute partition-level CubeWeights
     val cubeWeightsAndStats = selected
       .transform(
-        estimatePartitionCubeWeights(
-          0,
-          initialColStats,
-          globalColStatsAcc,
-          revision,
-          indexStatus,
-          isReplication = false))
+        estimatePartitionCubeWeights(0, globalColStatsAcc, indexStatus, isReplication = false))
       .collect()
 
     val numPartitions = weightedDataFrame.rdd.getNumPartitions
@@ -77,39 +73,27 @@ class SinglePassOTreeAnalyzerTest extends QbeastIntegrationTestSpec {
         weights.length shouldBe <=(numPartitions)
       }
 
-    cubeWeightsAndStats.foreach(r => r.colStats.size shouldBe columnTransformers.size)
+    cubeWeightsAndStats.foreach(r => r.colStats.size shouldBe columnsToIndex.size)
   }
 
   it should "compute global Cube Weights correctly" in withSpark { spark =>
-    val data = createDF(10000, spark)
-    val columnsSchema = data.schema
-    val columnTransformers = createTransformers(columnsSchema)
-    val revision =
-      Revision(0, 1000, QTableID("test"), 1000, columnTransformers, Seq.empty.toIndexedSeq)
-    val indexStatus = IndexStatus(revision, Set.empty)
+    val (data, indexStatus) = createDFAndStatus(10000, spark)
 
     // Add weights to DF to index
     val weightedDataFrame =
       data.withColumn(weightColumnName, lit(scala.util.Random.nextInt()))
 
     val columnsToIndex = indexStatus.revision.columnTransformers.map(_.columnName)
-    val cols = columnsToIndex :+ weightColumnName
     val selected = weightedDataFrame
-      .select(cols.map(col): _*)
+      .select(((columnsToIndex :+ weightColumnName)).map(col): _*)
 
-    val initialColStats = initializeColStats(columnsToIndex, selected.schema)
-    val globalColStatsAcc = new ColStatsAccumulator(initialColStats)
+    val globalColStatsAcc =
+      new ColStatsAccumulator(initializeColStats(columnsToIndex, selected.schema))
     spark.sparkContext.register(globalColStatsAcc, "globalColStatsAcc")
     // Compute partition-level CubeWeights
     val partitionedEstimatedCubeWeights = selected
       .transform(
-        estimatePartitionCubeWeights(
-          0,
-          initialColStats,
-          globalColStatsAcc,
-          revision,
-          indexStatus,
-          isReplication = false))
+        estimatePartitionCubeWeights(0, globalColStatsAcc, indexStatus, isReplication = false))
       .collect()
 
     // Get global column min/max for all indexing columns and compute global-level CubeWeights
@@ -143,36 +127,24 @@ class SinglePassOTreeAnalyzerTest extends QbeastIntegrationTestSpec {
   }
 
   it should "estimate Cube Weights correctly" in withSpark { spark =>
-    val data = createDF(10000, spark)
-    val columnsSchema = data.schema
-    val columnTransformers = createTransformers(columnsSchema)
-    val revision =
-      Revision(0, 1000, QTableID("test"), 1000, columnTransformers, Seq.empty.toIndexedSeq)
-    val indexStatus = IndexStatus(revision, Set.empty)
+    val (data, indexStatus) = createDFAndStatus(10000, spark)
 
     // Add weights to DF to index
     val weightedDataFrame =
       data.withColumn(weightColumnName, lit(scala.util.Random.nextInt()))
 
     val columnsToIndex = indexStatus.revision.columnTransformers.map(_.columnName)
-    val cols = columnsToIndex :+ weightColumnName
     val selected = weightedDataFrame
-      .select(cols.map(col): _*)
+      .select((columnsToIndex :+ weightColumnName).map(col): _*)
 
-    val initialColStats = initializeColStats(columnsToIndex, selected.schema)
-    val globalColStatsAcc = new ColStatsAccumulator(initialColStats)
+    val globalColStatsAcc =
+      new ColStatsAccumulator(initializeColStats(columnsToIndex, selected.schema))
     spark.sparkContext.register(globalColStatsAcc, "globalColStatsAcc")
     // Estimate partition-level cube weights
     val partitionedEstimatedCubeWeights =
       selected
         .transform(
-          estimatePartitionCubeWeights(
-            0,
-            initialColStats,
-            globalColStatsAcc,
-            indexStatus.revision,
-            indexStatus,
-            isReplication = false))
+          estimatePartitionCubeWeights(0, globalColStatsAcc, indexStatus, isReplication = false))
         .collect()
 
     // Get global column min/max for all indexing columns and compute global-level CubeWeights
@@ -196,5 +168,66 @@ class SinglePassOTreeAnalyzerTest extends QbeastIntegrationTestSpec {
     }
 
   }
+
+  "toGlobalCubeWeights" should
+    "return its input when partition limits are the same as global limits " in withSpark {
+      spark =>
+        val (data, indexStatus) = createDFAndStatus(10000, spark)
+        val columnsToIndex = indexStatus.revision.columnTransformers.map(_.columnName)
+
+        val weightedDataFrame =
+          data.toDF().withColumn(weightColumnName, lit(scala.util.Random.nextInt()))
+
+        // Merge all partitions into one to ensure partition stats are the same as
+        // global stats
+        val selected = weightedDataFrame
+          .select((columnsToIndex :+ weightColumnName).map(col): _*)
+          .coalesce(1)
+
+        val initialColStats = initializeColStats(columnsToIndex, selected.schema)
+        val globalColStatsAcc = new ColStatsAccumulator(initialColStats)
+        spark.sparkContext.register(globalColStatsAcc, "globalColStatsAcc")
+
+        // Estimate the cube weights at partition level
+        val partitionedEstimatedCubeWeights =
+          selected
+            .transform(estimatePartitionCubeWeights(0, globalColStatsAcc, indexStatus, false))
+            .collect()
+
+        val globalColStats = globalColStatsAcc.value
+        // Map partition cube weights to global cube weights
+        val globalEstimatedCubeWeights =
+          toGlobalCubeWeights(
+            partitionedEstimatedCubeWeights,
+            columnsToIndex.size,
+            globalColStats)
+
+        val partitionCubeNormalizedWeights = partitionedEstimatedCubeWeights.map {
+          case CubeWeightAndStats(cubeBytes, normalizedWeight, _) =>
+            CubeNormalizedWeight(cubeBytes, normalizedWeight)
+        }
+        partitionCubeNormalizedWeights shouldBe globalEstimatedCubeWeights
+    }
+
+  it should "return the same cubeWeights" in withSpark { spark =>
+    val cubes = CubeId.root(2).children
+
+    val localColStats = Seq(
+      ColStats("x", "DoubleDataType", 0.0, 100.0),
+      ColStats("y", "DoubleDataType", 0.0, 100.0))
+
+    val globalColStats = Seq(
+      ColStats("x", "DoubleDataType", 0.0, 100.0),
+      ColStats("y", "DoubleDataType", 0.0, 100.0))
+
+    val cubeWeightStats = cubes.map(c => CubeWeightAndStats(c.bytes, 1.0, localColStats)).toArray
+    val rootOverlap = toGlobalCubeWeights(cubeWeightStats, 2, globalColStats)
+
+    cubeWeightStats.map { case CubeWeightAndStats(bytes, w, _) =>
+      CubeNormalizedWeight(bytes, w)
+    } shouldBe rootOverlap
+  }
+
+  it should "return the correct overlapping cubesWeights" in withSpark { spark => }
 
 }
