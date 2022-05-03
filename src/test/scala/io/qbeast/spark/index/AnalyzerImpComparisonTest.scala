@@ -3,11 +3,10 @@ package io.qbeast.spark.index
 import io.qbeast.spark.{QbeastIntegrationTestSpec, QbeastTable}
 import org.apache.spark.sql.SparkSession
 
-class AnalyzerImplementationComparison extends QbeastIntegrationTestSpec {
+class AnalyzerImpComparisonTest extends QbeastIntegrationTestSpec {
 
-  def showMetrics(spark: SparkSession, path: String): Unit = {
+  private def showMetrics(spark: SparkSession, path: String): Unit = {
     // scalastyle:off println
-
     val metrics = QbeastTable.forPath(spark, path).getIndexMetrics()
 
     println(metrics)

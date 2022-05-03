@@ -5,7 +5,7 @@ import org.apache.spark.sql.SparkSession
 
 class SequentialAnalyzerTest extends QbeastIntegrationTestSpec {
 
-  def showMetrics(spark: SparkSession, path: String): Unit = {
+  private def showMetrics(spark: SparkSession, path: String): Unit = {
     // scalastyle:off println
 
     val metrics = QbeastTable.forPath(spark, path).getIndexMetrics()
