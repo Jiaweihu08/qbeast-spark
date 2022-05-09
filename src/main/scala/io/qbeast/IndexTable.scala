@@ -14,13 +14,12 @@ object IndexTable {
 
     val sourcePath =
       "s3a://qbeast-benchmarking-us-east-1/datasets/1000gb/delta/original-1tb-delta/store_sales/"
-
     val cubeSize = 5000000
-    val imp = "piecewiseSeq"
+    val imp = "double"
     val targetPath: String =
       s"""
-         |s3a://qbeast-benchmarking-us-east-1/jiaweiTmp/tpc-ds/1tb/no-repartition/
-         |$imp/50gbDMFilterAll/$cubeSize
+         |s3://qbeast-benchmarking-us-east-1/jiaweiTmp/tpc-ds/1tb/no-repartition/
+         |test-speed-r6gd2xlarge/$imp/$cubeSize
          |""".stripMargin.replaceAll("\n", "")
     val columnsToIndex = "ss_sold_date_sk,ss_item_sk,ss_store_sk"
 
@@ -44,7 +43,7 @@ object IndexTable {
     println("Average maxWeight per level.")
     metrics.cubeStatuses
       .groupBy(cw => cw._1.depth)
-      .mapValues(m => m.values.map(st => st.normalizedWeight).sum / m.size)
+      .mapValues(m => (m.values.map(st => st.normalizedWeight).sum / m.size, m.size))
       .toSeq
       .sortBy(_._1)
       .foreach(println)

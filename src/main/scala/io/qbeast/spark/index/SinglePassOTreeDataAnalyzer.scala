@@ -183,18 +183,17 @@ object SinglePassOTreeDataAnalyzer extends OTreeDataAnalyzer with Serializable {
     val globalEstimatedCubeWeights =
       toGlobalCubeWeights(partitionedEstimatedCubeWeights, columnsToIndex.size, globalColStats)
 
-    val runtime = System.currentTimeMillis() - startTime
-    // scalastyle:off
-    println(">>>>>>>>>>>>>>\n")
-    println(s"GREP: toGlobalCubeWeights took $runtime ms")
-    println(">>>>>>>>>>>>>>\n")
-
     // Compute the overall estimated cube weights
     val estimatedCubeWeights: Map[CubeId, NormalizedWeight] =
       globalEstimatedCubeWeights
         .groupBy(cw => lastRevision.createCubeId(cw.cubeBytes))
         .mapValues(cubeWeights => 1.0 / cubeWeights.map(1.0 / _.normalizedWeight).sum)
 
+    // scalastyle:off
+    val runtime = System.currentTimeMillis() - startTime
+    println(">>>>>>>>>>>>>>\n")
+    println(s"GREP: toGlobalCubeWeights took $runtime ms")
+    println(">>>>>>>>>>>>>>\n")
     val revChange = Some(
       RevisionChange(
         supersededRevision = indexStatus.revision,
