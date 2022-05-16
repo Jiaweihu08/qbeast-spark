@@ -55,16 +55,26 @@ class SinglePassOTreeAnalyzerTest extends QbeastIntegrationTestSpec {
 
     val globalColStatsAcc =
       new ColStatsAccumulator(initializeColStats(columnsToIndex, selected.schema))
+    val ColStatsIdMapAcc = new ColStatsIdAccumulator(Map.empty[Int, Seq[ColStats]])
+
     spark.sparkContext.register(globalColStatsAcc, "globalColStatsAcc")
+    spark.sparkContext.register(ColStatsIdMapAcc, "colStatsIdMapAcc")
 
-    val estimatedPartitionCubeWeights = selected
-      .transform(
-        estimatePartitionCubeWeights(0, globalColStatsAcc, indexStatus, isReplication = false))
-      .collect()
+    // Estimate the cube weights at partition level
+    val _ =
+      estimatePartitionCubeWeights(
+        selected,
+        0,
+        globalColStatsAcc,
+        ColStatsIdMapAcc,
+        indexStatus,
+        isReplication = false)
+        .collect()
 
-    val allPartitionColStats = estimatedPartitionCubeWeights.map(_.colStats).toSet
     val globalColStats = globalColStatsAcc.value
+    val colStatsIdMap = ColStatsIdMapAcc.value
 
+    val allPartitionColStats = colStatsIdMap.values
     // All partition ColStats should have the correct number of dimensions
     allPartitionColStats.forall(colStats => colStats.size == columnsToIndex.size) shouldBe true
 
@@ -120,21 +130,29 @@ class SinglePassOTreeAnalyzerTest extends QbeastIntegrationTestSpec {
 
     val globalColStatsAcc =
       new ColStatsAccumulator(initializeColStats(columnsToIndex, selected.schema))
-    spark.sparkContext.register(globalColStatsAcc, "globalColStatsAcc")
+    val ColStatsIdMapAcc = new ColStatsIdAccumulator(Map.empty[Int, Seq[ColStats]])
 
-    // Compute partition-level CubeWeights
-    val cubeWeightsAndStats = selected
-      .transform(
-        estimatePartitionCubeWeights(0, globalColStatsAcc, indexStatus, isReplication = false))
-      .collect()
+    spark.sparkContext.register(globalColStatsAcc, "globalColStatsAcc")
+    spark.sparkContext.register(ColStatsIdMapAcc, "colStatsIdMapAcc")
+
+    // Estimate the cube weights at partition level
+    val partitionedEstimatedCubeWeights =
+      estimatePartitionCubeWeights(
+        selected,
+        0,
+        globalColStatsAcc,
+        ColStatsIdMapAcc,
+        indexStatus,
+        isReplication = false)
+        .collect()
 
     val numPartitions = weightedDataFrame.rdd.getNumPartitions
 
-    cubeWeightsAndStats
+    partitionedEstimatedCubeWeights
       .groupBy(_.cubeBytes)
-      .foreach { case (_, weights: Array[CubeWeightAndStats]) =>
-        weights.foreach(w => w.normalizedWeight shouldBe >(0.0))
-        weights.length shouldBe <=(numPartitions)
+      .foreach { case (_, cw: Array[CubeWeightAndPartitionId]) =>
+        cw.foreach(w => w.normalizedWeight shouldBe >(0.0))
+        cw.length shouldBe <=(numPartitions)
       }
   }
 
@@ -151,16 +169,32 @@ class SinglePassOTreeAnalyzerTest extends QbeastIntegrationTestSpec {
 
     val globalColStatsAcc =
       new ColStatsAccumulator(initializeColStats(columnsToIndex, selected.schema))
-    spark.sparkContext.register(globalColStatsAcc, "globalColStatsAcc")
+    val ColStatsIdMapAcc = new ColStatsIdAccumulator(Map.empty[Int, Seq[ColStats]])
 
-    val partitionedEstimatedCubeWeights = selected
-      .transform(
-        estimatePartitionCubeWeights(0, globalColStatsAcc, indexStatus, isReplication = false))
-      .collect()
+    spark.sparkContext.register(globalColStatsAcc, "globalColStatsAcc")
+    spark.sparkContext.register(ColStatsIdMapAcc, "colStatsIdMapAcc")
+
+    // Estimate the cube weights at partition level
+    val partitionedEstimatedCubeWeights =
+      estimatePartitionCubeWeights(
+        selected,
+        0,
+        globalColStatsAcc,
+        ColStatsIdMapAcc,
+        indexStatus,
+        isReplication = false)
+        .collect()
 
     val globalColStats = globalColStatsAcc.value
+    val colStatsIdMap = ColStatsIdMapAcc.value
+
+    // Map partition cube weights to global cube weights
     val globalEstimatedCubeWeights =
-      toGlobalCubeWeights(partitionedEstimatedCubeWeights, columnsToIndex.size, globalColStats)
+      toGlobalCubeWeights(
+        partitionedEstimatedCubeWeights,
+        columnsToIndex.size,
+        globalColStats,
+        colStatsIdMap)
 
     // For each partition-level cube there can be multiple overlapping cubes from
     // the global space
@@ -180,21 +214,34 @@ class SinglePassOTreeAnalyzerTest extends QbeastIntegrationTestSpec {
 
     val globalColStatsAcc =
       new ColStatsAccumulator(initializeColStats(columnsToIndex, selected.schema))
+    val ColStatsIdMapAcc = new ColStatsIdAccumulator(Map.empty[Int, Seq[ColStats]])
+
     spark.sparkContext.register(globalColStatsAcc, "globalColStatsAcc")
-    // Estimate partition-level cube weights
+    spark.sparkContext.register(ColStatsIdMapAcc, "colStatsIdMapAcc")
+
+    // Estimate the cube weights at partition level
     val partitionedEstimatedCubeWeights =
-      selected
-        .transform(
-          estimatePartitionCubeWeights(0, globalColStatsAcc, indexStatus, isReplication = false))
+      estimatePartitionCubeWeights(
+        selected,
+        0,
+        globalColStatsAcc,
+        ColStatsIdMapAcc,
+        indexStatus,
+        isReplication = false)
         .collect()
 
-    // Get global column min/max for all indexing columns and compute global-level CubeWeights
     val globalColStats = globalColStatsAcc.value
-    val globalEstimatedCubeWeights =
-      toGlobalCubeWeights(partitionedEstimatedCubeWeights, columnsToIndex.size, globalColStats)
-
+    val colStatsIdMap = ColStatsIdMapAcc.value
     val transformations = getTransformations(globalColStats)
     val lastRevision = indexStatus.revision.copy(transformations = transformations)
+
+    // Map partition cube weights to global cube weights
+    val globalEstimatedCubeWeights =
+      toGlobalCubeWeights(
+        partitionedEstimatedCubeWeights,
+        columnsToIndex.size,
+        globalColStats,
+        colStatsIdMap)
 
     // Compute the overall estimated cube weights
     val estimatedCubeWeights: Map[CubeId, NormalizedWeight] =
@@ -225,26 +272,37 @@ class SinglePassOTreeAnalyzerTest extends QbeastIntegrationTestSpec {
           .select((columnsToIndex :+ weightColumnName).map(col): _*)
           .coalesce(1)
 
-        val initialColStats = initializeColStats(columnsToIndex, selected.schema)
-        val globalColStatsAcc = new ColStatsAccumulator(initialColStats)
+        val globalColStatsAcc =
+          new ColStatsAccumulator(initializeColStats(columnsToIndex, selected.schema))
+        val ColStatsIdMapAcc = new ColStatsIdAccumulator(Map.empty[Int, Seq[ColStats]])
+
         spark.sparkContext.register(globalColStatsAcc, "globalColStatsAcc")
+        spark.sparkContext.register(ColStatsIdMapAcc, "colStatsIdMapAcc")
 
         // Estimate the cube weights at partition level
         val partitionedEstimatedCubeWeights =
-          selected
-            .transform(estimatePartitionCubeWeights(0, globalColStatsAcc, indexStatus, false))
+          estimatePartitionCubeWeights(
+            selected,
+            0,
+            globalColStatsAcc,
+            ColStatsIdMapAcc,
+            indexStatus,
+            isReplication = false)
             .collect()
 
         val globalColStats = globalColStatsAcc.value
+        val colStatsIdMap = ColStatsIdMapAcc.value
+
         // Map partition cube weights to global cube weights
         val globalEstimatedCubeWeights =
           toGlobalCubeWeights(
             partitionedEstimatedCubeWeights,
             columnsToIndex.size,
-            globalColStats)
+            globalColStats,
+            colStatsIdMap)
 
         val partitionCubeNormalizedWeights = partitionedEstimatedCubeWeights.map {
-          case CubeWeightAndStats(cubeBytes, normalizedWeight, _) =>
+          case CubeWeightAndPartitionId(cubeBytes, normalizedWeight, _) =>
             CubeNormalizedWeight(cubeBytes, normalizedWeight)
         }
         partitionCubeNormalizedWeights shouldBe globalEstimatedCubeWeights
@@ -261,11 +319,12 @@ class SinglePassOTreeAnalyzerTest extends QbeastIntegrationTestSpec {
       ColStats("x", "DoubleDataType", 0.0, 100.0),
       ColStats("y", "DoubleDataType", 0.0, 100.0))
 
-    val cubeWeightStats =
-      cubes.map(c => CubeWeightAndStats(c.bytes, 1.0, localColStats)).toArray
-    val rootOverlap = toGlobalCubeWeights(cubeWeightStats, 2, globalColStats)
+    val cubeWeightAndPartitionId =
+      cubes.map(c => CubeWeightAndPartitionId(c.bytes, 1.0, 0)).toArray
+    val rootOverlap =
+      toGlobalCubeWeights(cubeWeightAndPartitionId, 2, globalColStats, Map(0 -> localColStats))
 
-    cubeWeightStats.map { case CubeWeightAndStats(bytes, w, _) =>
+    cubeWeightAndPartitionId.map { case CubeWeightAndPartitionId(bytes, w, _) =>
       CubeNormalizedWeight(bytes, w)
     } shouldBe rootOverlap
   }
@@ -283,8 +342,9 @@ class SinglePassOTreeAnalyzerTest extends QbeastIntegrationTestSpec {
       ColStats("x", "DoubleDataType", 0.0, 100.0),
       ColStats("y", "DoubleDataType", 0.0, 100.0))
 
-    val cubeWeightAndStats = Array(CubeWeightAndStats(cubes.head.bytes, 1.0, localColStats))
-    val overlappingCubeWeights = toGlobalCubeWeights(cubeWeightAndStats, 2, globalColStats)
+    val cubeWeightAndPartitionId = Array(CubeWeightAndPartitionId(cubes.head.bytes, 1.0, 0))
+    val overlappingCubeWeights =
+      toGlobalCubeWeights(cubeWeightAndPartitionId, 2, globalColStats, Map(0 -> localColStats))
 
     val overlappingCubes = overlappingCubeWeights.map(cw => CubeId(2, cw.cubeBytes))
     val overlappingWeights = overlappingCubeWeights.map(_.normalizedWeight).toSet
@@ -311,8 +371,9 @@ class SinglePassOTreeAnalyzerTest extends QbeastIntegrationTestSpec {
       ColStats("x", "DoubleDataType", 0.0, 100.0),
       ColStats("y", "DoubleDataType", 0.0, 100.0))
 
-    val cubeWeightAndStats = Array(CubeWeightAndStats(cubes(2).bytes, 1.0, localColStats))
-    val overlappingCubeWeights = toGlobalCubeWeights(cubeWeightAndStats, 2, globalColStats)
+    val cubeWeightAndPartitionId = Array(CubeWeightAndPartitionId(cubes(2).bytes, 1.0, 0))
+    val overlappingCubeWeights =
+      toGlobalCubeWeights(cubeWeightAndPartitionId, 2, globalColStats, Map(0 -> localColStats))
 
     val overlappingCubes = overlappingCubeWeights.map(cw => CubeId(2, cw.cubeBytes))
     val overlappingWeights = overlappingCubeWeights.map(_.normalizedWeight).toSet
