@@ -25,7 +25,6 @@ object SinglePassOTreeDataAnalyzer extends OTreeDataAnalyzer with Serializable {
       val numPartitions: Int = selected.rdd.getNumPartitions
       val bufferCapacity: Long = CUBE_WEIGHTS_BUFFER_CAPACITY
       val weightIndex = selected.schema.fieldIndex(weightColumnName)
-
       selected
         .mapPartitions(rows => {
           if (rows.isEmpty) {
@@ -33,8 +32,10 @@ object SinglePassOTreeDataAnalyzer extends OTreeDataAnalyzer with Serializable {
           } else {
             val (iterForStats, iterForCubeWeights) = rows.duplicate
             val epsilon = 42.0
+            var numElems = 0L
             val partitionColStats = iterForStats
               .foldLeft(colStatsAcc.value) { case (colStats, row) =>
+                numElems += 1
                 colStats.map(stats => updateColStats(stats, row))
               }
               .map(stats =>
@@ -57,7 +58,7 @@ object SinglePassOTreeDataAnalyzer extends OTreeDataAnalyzer with Serializable {
               new CubeWeightsBuilder(
                 indexStatus = indexStatus,
                 numPartitions = numPartitions,
-                numElements = numElements,
+                numElements = numPartitions * numElems,
                 bufferCapacity = bufferCapacity)
 
             iterForCubeWeights.foreach { row =>
@@ -190,10 +191,19 @@ object SinglePassOTreeDataAnalyzer extends OTreeDataAnalyzer with Serializable {
         .mapValues(cubeWeights => 1.0 / cubeWeights.map(1.0 / _.normalizedWeight).sum)
 
     // scalastyle:off
+    val dcs = indexStatus.revision.desiredCubeSize
+    val partitionCubeCount = partitionedEstimatedCubeWeights.length
+    println(s""">>> SinglePass; 
+         |desiredCubeSize: $dcs, 
+         |Number of partition cubes: $partitionCubeCount, 
+         |Number of final estimated cubes: ${estimatedCubeWeights.size} 
+         |""".stripMargin.replaceAll("\n", ""))
+
     val runtime = System.currentTimeMillis() - startTime
-    println(">>>>>>>>>>>>>>\n")
+    println(">>>>>>>>>>>>>>")
     println(s"GREP: toGlobalCubeWeights took $runtime ms")
     println(">>>>>>>>>>>>>>\n")
+
     val revChange = Some(
       RevisionChange(
         supersededRevision = indexStatus.revision,
