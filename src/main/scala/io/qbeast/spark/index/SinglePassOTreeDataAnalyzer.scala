@@ -58,7 +58,7 @@ object SinglePassOTreeDataAnalyzer extends OTreeDataAnalyzer with Serializable {
               new CubeWeightsBuilder(
                 indexStatus = indexStatus,
                 numPartitions = numPartitions,
-                numElements = numElements, // numPartitions * numElems
+                numElements = numPartitions * numElems,
                 bufferCapacity = bufferCapacity)
 
             iterForCubeWeights.foreach { row =>
@@ -171,12 +171,7 @@ object SinglePassOTreeDataAnalyzer extends OTreeDataAnalyzer with Serializable {
     // Estimate the cube weights at partition level
     val partitionedEstimatedCubeWeights =
       selected
-        .transform(
-          estimatePartitionCubeWeights(
-            2620797576L,
-            globalColStatsAcc,
-            indexStatus,
-            isReplication))
+        .transform(estimatePartitionCubeWeights(0, globalColStatsAcc, indexStatus, isReplication))
         .collect()
 
     val globalColStats = globalColStatsAcc.value

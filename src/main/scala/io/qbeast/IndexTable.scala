@@ -16,15 +16,18 @@ object IndexTable {
       "s3a://qbeast-benchmarking-us-east-1/datasets/1000gb/delta/original-1tb-delta/store_sales/"
     val df = spark.read.format("delta").load(sourcePath).na.drop()
 
-    val desiredCubeSizes = 5000000 :: 3000000 :: 500000 :: Nil
-    val implementations = "single" :: Nil // :: "double"
+//    val desiredCubeSizes = 5000000 :: 3000000 :: 500000 :: Nil
+//    val implementations = "single" :: Nil // :: "double"
 
-    implementations.foreach { imp =>
-      desiredCubeSizes.foreach { dcs =>
-        val path = index(imp, dcs, df)
-        showMetrics(path)
-      }
-    }
+    val path = index("single", 500000, df)
+    showMetrics(path)
+
+//    implementations.foreach { imp =>
+//      desiredCubeSizes.foreach { dcs =>
+//        val path = index(imp, dcs, df)
+//        showMetrics(path)
+//      }
+//    }
 
   }
 
