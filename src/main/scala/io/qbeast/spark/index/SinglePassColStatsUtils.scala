@@ -140,6 +140,37 @@ class ColStatsAccumulator(colStats: Seq[ColStats])
 
 }
 
+class ColStatsIdAccumulator(partitionColStatsMap: Map[Int, Seq[ColStats]])
+    extends AccumulatorV2[Map[Int, Seq[ColStats]], Map[Int, Seq[ColStats]]] {
+
+  private var colStatsIdMap: Map[Int, Seq[ColStats]] = partitionColStatsMap
+
+  override def isZero: Boolean = {
+    colStatsIdMap.isEmpty
+  }
+
+  override def copy(): AccumulatorV2[Map[Int, Seq[ColStats]], Map[Int, Seq[ColStats]]] = this
+
+  override def reset(): Unit = {
+    colStatsIdMap = Map[Int, Seq[ColStats]]()
+  }
+
+  override def add(v: Map[Int, Seq[ColStats]]): Unit = {
+    assert(v.keys.forall(!colStatsIdMap.contains(_)))
+    colStatsIdMap = colStatsIdMap ++ v
+  }
+
+  override def merge(
+      other: AccumulatorV2[Map[Int, Seq[ColStats]], Map[Int, Seq[ColStats]]]): Unit = {
+    this.add(other.value)
+  }
+
+  override def value: Map[Int, Seq[ColStats]] = {
+    colStatsIdMap
+  }
+
+}
+
 case class ColStats(
     colName: String,
     dType: String,
@@ -151,3 +182,8 @@ case class CubeWeightAndStats(
     cubeBytes: Array[Byte],
     normalizedWeight: NormalizedWeight,
     colStats: Seq[ColStats])
+
+case class CubeWeightAndPartitionId(
+    cubeBytes: Array[Byte],
+    normalizedWeight: NormalizedWeight,
+    partitionId: Int)

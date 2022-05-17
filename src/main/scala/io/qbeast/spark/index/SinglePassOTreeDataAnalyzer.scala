@@ -8,88 +8,90 @@ import io.qbeast.spark.index.DoublePassOTreeDataAnalyzer.addRandomWeight
 import io.qbeast.spark.index.QbeastColumns.{cubeToReplicateColumnName, weightColumnName}
 import io.qbeast.spark.index.SinglePassColStatsUtils._
 import org.apache.spark.qbeast.config.CUBE_WEIGHTS_BUFFER_CAPACITY
+import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.functions.col
-import org.apache.spark.sql.{DataFrame, Dataset, SparkSession}
+import org.apache.spark.sql.{DataFrame, SparkSession}
 
 object SinglePassOTreeDataAnalyzer extends OTreeDataAnalyzer with Serializable {
 
   private[index] def estimatePartitionCubeWeights(
+      selected: DataFrame,
       numElements: Long,
       colStatsAcc: ColStatsAccumulator,
+      colStatsIdMapAcc: ColStatsIdAccumulator,
       indexStatus: IndexStatus,
-      isReplication: Boolean): DataFrame => Dataset[CubeWeightAndStats] =
-    (selected: DataFrame) => {
-      val spark = SparkSession.active
-      import spark.implicits._
+      isReplication: Boolean): RDD[CubeWeightAndPartitionId] = {
+    val numPartitions: Int = selected.rdd.getNumPartitions
+    val bufferCapacity: Long = CUBE_WEIGHTS_BUFFER_CAPACITY
+    val weightIndex = selected.schema.fieldIndex(weightColumnName)
 
-      val numPartitions: Int = selected.rdd.getNumPartitions
-      val bufferCapacity: Long = CUBE_WEIGHTS_BUFFER_CAPACITY
-      val weightIndex = selected.schema.fieldIndex(weightColumnName)
-      selected
-        .mapPartitions(rows => {
-          if (rows.isEmpty) {
-            Seq[CubeWeightAndStats]().iterator
-          } else {
-            val (iterForStats, iterForCubeWeights) = rows.duplicate
-            val epsilon = 42.0
-            var numElems = 0L
-            val partitionColStats = iterForStats
-              .foldLeft(colStatsAcc.value) { case (colStats, row) =>
-                numElems += 1
-                colStats.map(stats => updateColStats(stats, row))
-              }
-              .map(stats =>
-                if (stats.min == stats.max) {
-                  if (stats.max + epsilon < Double.MaxValue) {
-                    stats.copy(max = stats.max + epsilon)
-                  } else {
-                    stats.copy(min = stats.min - epsilon)
-                  }
-                } else {
-                  stats
-                })
-
-            colStatsAcc.add(partitionColStats)
-
-            val partitionRevision =
-              indexStatus.revision.copy(transformations = getTransformations(partitionColStats))
-
-            val weights =
-              new CubeWeightsBuilder(
-                indexStatus = indexStatus,
-                numPartitions = numPartitions,
-                numElements = numElements, // numPartitions * numElems
-                bufferCapacity = bufferCapacity)
-
-            iterForCubeWeights.foreach { row =>
-              val point = RowUtils.rowValuesToPoint(row, partitionRevision)
-              val weight = Weight(row.getAs[Int](weightIndex))
-              if (isReplication) {
-                val parentBytes = row.getAs[Array[Byte]](cubeToReplicateColumnName)
-                val parent = Some(partitionRevision.createCubeId(parentBytes))
-                weights.update(point, weight, parent)
-              } else weights.update(point, weight)
+    selected.rdd
+      .mapPartitionsWithIndex((idx, rows) => {
+        if (rows.isEmpty) {
+          Seq[CubeWeightAndPartitionId]().iterator
+        } else {
+          val (iterForStats, iterForCubeWeights) = rows.duplicate
+          val epsilon = 42.0
+          var numElems = 0L
+          val partitionColStats = iterForStats
+            .foldLeft(colStatsAcc.value) { case (colStats, row) =>
+              numElems += 1
+              colStats.map(stats => updateColStats(stats, row))
             }
-            weights
-              .result()
-              .map { case CubeNormalizedWeight(cubeBytes, weight) =>
-                CubeWeightAndStats(cubeBytes, weight, partitionColStats)
-              }
-              .iterator
+            .map(stats =>
+              if (stats.min == stats.max) {
+                if (stats.max + epsilon < Double.MaxValue) {
+                  stats.copy(max = stats.max + epsilon)
+                } else {
+                  stats.copy(min = stats.min - epsilon)
+                }
+              } else {
+                stats
+              })
+
+          colStatsAcc.add(partitionColStats)
+          colStatsIdMapAcc.add(Map(idx -> partitionColStats))
+
+          val partitionRevision =
+            indexStatus.revision.copy(transformations = getTransformations(partitionColStats))
+
+          val weights =
+            new CubeWeightsBuilder(
+              indexStatus = indexStatus,
+              numPartitions = numPartitions,
+              numElements = numPartitions * numElems,
+              bufferCapacity = bufferCapacity)
+
+          iterForCubeWeights.foreach { row =>
+            val point = RowUtils.rowValuesToPoint(row, partitionRevision)
+            val weight = Weight(row.getAs[Int](weightIndex))
+            if (isReplication) {
+              val parentBytes = row.getAs[Array[Byte]](cubeToReplicateColumnName)
+              val parent = Some(partitionRevision.createCubeId(parentBytes))
+              weights.update(point, weight, parent)
+            } else weights.update(point, weight)
           }
-        })
-    }
+          weights
+            .result()
+            .map { case CubeNormalizedWeight(cubeBytes, weight) =>
+              CubeWeightAndPartitionId(cubeBytes, weight, idx)
+            }
+            .iterator
+        }
+      })
+  }
 
   private[index] def toGlobalCubeWeights(
-      partitionedEstimatedCubeWeights: Array[CubeWeightAndStats],
+      partitionedEstimatedCubeWeights: Array[CubeWeightAndPartitionId],
       dimensionCount: Int,
-      globalColStats: Seq[ColStats]): Array[CubeNormalizedWeight] = {
-
+      globalColStats: Seq[ColStats],
+      colStatsIdMap: Map[Int, Seq[ColStats]]): Array[CubeNormalizedWeight] = {
     partitionedEstimatedCubeWeights.flatMap {
-      case CubeWeightAndStats(
+      case CubeWeightAndPartitionId(
             cubeBytes: Array[Byte],
             cubeWeight: NormalizedWeight,
-            localColStats: Seq[ColStats]) =>
+            partitionId: Int) =>
+        val localColStats = colStatsIdMap(partitionId)
         val hasGlobalRanges = (0 until dimensionCount).forall { idx =>
           localColStats(idx).min == globalColStats(idx).min &&
           localColStats(idx).max == globalColStats(idx).max
@@ -166,20 +168,24 @@ object SinglePassOTreeDataAnalyzer extends OTreeDataAnalyzer with Serializable {
 
     val globalColStatsAcc = new ColStatsAccumulator(
       initializeColStats(columnsToIndex, selected.schema))
+    val ColStatsIdMapAcc = new ColStatsIdAccumulator(Map.empty[Int, Seq[ColStats]])
+
     sparkContext.register(globalColStatsAcc, "globalColStatsAcc")
+    sparkContext.register(ColStatsIdMapAcc, "colStatsIdMapAcc")
 
     // Estimate the cube weights at partition level
     val partitionedEstimatedCubeWeights =
-      selected
-        .transform(
-          estimatePartitionCubeWeights(
-            2620797576L,
-            globalColStatsAcc,
-            indexStatus,
-            isReplication))
+      estimatePartitionCubeWeights(
+        selected,
+        0,
+        globalColStatsAcc,
+        ColStatsIdMapAcc,
+        indexStatus,
+        isReplication)
         .collect()
 
     val globalColStats = globalColStatsAcc.value
+    val colStatsIdMap = ColStatsIdMapAcc.value
     val transformations = getTransformations(globalColStats)
     val lastRevision = indexStatus.revision.copy(transformations = transformations)
 
@@ -187,7 +193,11 @@ object SinglePassOTreeDataAnalyzer extends OTreeDataAnalyzer with Serializable {
     val startTime = System.currentTimeMillis()
 
     val globalEstimatedCubeWeights =
-      toGlobalCubeWeights(partitionedEstimatedCubeWeights, columnsToIndex.size, globalColStats)
+      toGlobalCubeWeights(
+        partitionedEstimatedCubeWeights,
+        columnsToIndex.size,
+        globalColStats,
+        colStatsIdMap)
 
     // Compute the overall estimated cube weights
     val estimatedCubeWeights: Map[CubeId, NormalizedWeight] =
