@@ -208,7 +208,7 @@ private[table] class IndexedTableImpl(
         val replicatedSet = updatedStatus.replicatedSet
         val revisionID = updatedStatus.revision.revisionID
         try {
-          doWrite(data, updatedStatus, append)
+          doWrite(data, updatedStatus, append, analyzerImp)
           tries = 0
         } catch {
           case cme: ConcurrentModificationException
@@ -302,7 +302,7 @@ private[table] class IndexedTableImpl(
           indexStatus.revision,
           QbeastColumns.cubeToReplicateColumnName)
       val (qbeastData, tableChanges) =
-        indexManager.optimize(dataToReplicate, indexStatus)
+        indexManager.optimize(dataToReplicate, indexStatus, "double")
       val fileActions =
         dataWriter.write(tableID, schema, qbeastData, tableChanges)
       (tableChanges, fileActions)
