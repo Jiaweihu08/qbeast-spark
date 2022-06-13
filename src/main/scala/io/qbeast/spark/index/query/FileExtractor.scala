@@ -3,9 +3,11 @@
  */
 package io.qbeast.spark.index.query
 
+import io.qbeast.IISeq
 import io.qbeast.core.model._
 import io.qbeast.spark.delta.DeltaQbeastSnapshot
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.delta.DeltaLog
 
 // scalastyle:off
@@ -16,25 +18,27 @@ import org.apache.spark.sql.delta.DeltaLog
 // 4. Read data from S and use it as the starting point for the next iter until the tolerance
 // constraint is met for all groups
 
-class FileExtractor(spark: SparkSession) {
-  val path = "s3a://qbeast-research/github-archive/pr_twoCols/"
+class FileExtractor(spark: SparkSession, path: String) {
 
-  val deltaLog: DeltaLog = DeltaLog.forTable(spark, path)
-  val qbeastSnapshot: DeltaQbeastSnapshot = DeltaQbeastSnapshot(deltaLog.snapshot)
-  val querySpecBuilder = new QuerySpecBuilder(Seq.empty)
-
-  val queryExecutor =
-    new QueryExecutor(querySpecBuilder, qbeastSnapshot)
+  val qbeastSnapshot: DeltaQbeastSnapshot = DeltaQbeastSnapshot(
+    DeltaLog.forTable(spark, path).snapshot)
 
   val revision: Revision = qbeastSnapshot.loadAllRevisions.head
   val indexStatus: IndexStatus = qbeastSnapshot.loadIndexStatus(revision.revisionID)
 
-  val querySpace: AllSpace = AllSpace()
+  def getSamplingBlocks(fraction: Double, expressions: Seq[Expression]): IISeq[QbeastBlock] = {
+    val weightRange = if (fraction < 1.0) {
+      WeightRange(Weight.MinValue, Weight(fraction))
+    } else {
+      WeightRange(Weight.MinValue, Weight.MaxValue)
+    }
 
-  def getMatchingFiles(fraction: Double): Seq[String] = {
-    val weightRange = WeightRange(Weight.MinValue, Weight(fraction))
-    val querySpec = QuerySpec(weightRange, querySpace)
-    queryExecutor.executeRevision(querySpec, indexStatus).map(_.path)
+    val querySpecBuilder = new QuerySpecBuilder(expressions)
+    val querySpec: QuerySpec = querySpecBuilder.build(revision)
+    val queryExecutor =
+      new QueryExecutor(querySpecBuilder, qbeastSnapshot)
+
+    queryExecutor.executeRevision(querySpec.copy(weightRange = weightRange), indexStatus)
   }
 
 }
