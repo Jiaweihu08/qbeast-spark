@@ -205,13 +205,13 @@ object DoublePassOTreeDataAnalyzer extends OTreeDataAnalyzer with Serializable {
         .toMap
 
     // scalastyle:off
-    val dcs = indexStatus.revision.desiredCubeSize
-    val partitionCubeCount = partitionedEstimatedCubeWeights.count()
-    println(s""">>> DoublePass; 
-         |desiredCubeSize: $dcs, 
-         |Number of partition cubes: $partitionCubeCount 
-         |Number of final estimated cubes: ${estimatedCubeWeights.size} 
-         |""".stripMargin.replaceAll("\n", ""))
+//    val dcs = indexStatus.revision.desiredCubeSize
+//    val partitionCubeCount = partitionedEstimatedCubeWeights.count()
+//    println(s""">>> DoublePass;
+//         |desiredCubeSize: $dcs,
+//         |Number of partition cubes: $partitionCubeCount
+//         |Number of final estimated cubes: ${estimatedCubeWeights.size}
+//         |""".stripMargin.replaceAll("\n", ""))
 
     // Gather the new changes
     val tableChanges = BroadcastedTableChanges(
