@@ -6,7 +6,7 @@ package io.qbeast
 import io.qbeast.core.model.QbeastBlock
 import io.qbeast.spark.index.query.FileExtractor
 import org.apache.spark.sql.expressions.UserDefinedFunction
-import org.apache.spark.sql.functions.{avg, expr, udf}
+import org.apache.spark.sql.functions._
 import org.apache.spark.sql.{DataFrame, Row, SparkSession}
 
 import scala.collection.mutable
@@ -17,39 +17,25 @@ object Script {
 
   def main(args: Array[String]): Unit = {
     val spark: SparkSession = SparkSession.builder().getOrCreate()
-    import spark.implicits._
-
-    val script = new ToleranceScript(spark)
 
     val sourcePath =
       "s3a://qbeast-research/github-archive/qbeast-pr/double/changed_files_upperBound50/5000000/"
     val fractionPath =
       "s3a://qbeast-research/github-archive/qbeast-pr/double/changed_files_upperBound50/groupFractions/"
 
-    val fractionFiles = script.computeFractionFiles(sourcePath, fractionPath)
+    val script = new ToleranceScript(spark)
 
-    val withEstimationError = script.addApproximationError(fractionFiles)
+    val groupFractions = (spark.read
+      .format("csv")
+      .option("header", "true")
+      .option("inferSchema", "true")
+      .load(fractionPath))
 
-    val outputDf: DataFrame = withEstimationError
-      .map(RowWithPaths.unapply(_).get)
-      .toDF(
-        "language",
-        "year",
-        "avg",
-        "std",
-        "cnt",
-        "fraction10p",
-        "fraction1p",
-        "changed_files",
-        "paths10p",
-        "paths1p",
-        "groupFilter",
-        "estAvg10p",
-        "estAvg1p",
-        "avgError10p",
-        "avgError1p")
+    val (paths10p, paths1p) = script.gatherFractionFiles(sourcePath, groupFractions)
 
-    outputDf.write.parquet(
+    val withEstimationAndError = script.addApproxAvgAndError(groupFractions, paths10p, paths1p)
+
+    withEstimationAndError.write.parquet(
       "s3a://qbeast-research/github-archive/qbeast-pr/double/changed_files_upperBound50/withError/")
   }
 
@@ -145,27 +131,17 @@ class ToleranceScript(spark: SparkSession) {
 
   }
 
-  def computeFractionFiles(sourcePath: String, fractionPath: String): Seq[RowWithPaths] = {
+  def gatherFractionFiles(
+      sourcePath: String,
+      groupFractions: DataFrame): (Seq[String], Seq[String]) = {
     val extractor = new FileExtractor(spark, sourcePath)
-    val groupFractions = (spark.read
-      .format("csv")
-      .option("header", "true")
-      .option("inferSchema", "true")
-      .load(fractionPath))
 
     val rows = groupFractions.collect()
     val allBlocks10p = mutable.ArrayBuffer.empty[QbeastBlock]
     val allBlocks1p = mutable.ArrayBuffer.empty[QbeastBlock]
-    val fractionFiles = rows.map {
-      case Row(
-            language,
-            year,
-            avg: Double,
-            std: Double,
-            cnt: Int,
-            fraction10p: Double,
-            fraction1p: Double,
-            col: String) =>
+
+    rows.foreach {
+      case Row(language, year, _, _, _, fraction10p: Double, fraction1p: Double, _) =>
         val groupFilter = (language, year) match {
           case (l: String, y: Int) => s"""repo_main_language == "$l" AND year == $y"""
           case (null, y: Int) => s"repo_main_language IS NULL AND year == $y"
@@ -182,140 +158,66 @@ class ToleranceScript(spark: SparkSession) {
 
         allBlocks10p ++= blocks10p
         allBlocks1p ++= blocks1p
-
-        RowWithPaths(
-          language,
-          year,
-          avg,
-          std,
-          cnt,
-          fraction10p,
-          fraction1p,
-          col,
-          blocks10p.map(sourcePath + _.path),
-          blocks1p.map(sourcePath + _.path),
-          groupFilter)
     }
 
-    val files10p = fractionFiles.flatMap(r => r.paths10p).toSet.toSeq
     val unique10pBlocks = allBlocks10p.toSet.toSeq
     val size10p = (unique10pBlocks.foldLeft(0d) { case (acc, b) =>
       acc + b.size / 1024d / 1024d
     } / 1024d).toInt
 
-    val files1p = fractionFiles.flatMap(r => r.paths1p).toSet.toSeq
     val unique1pBlocks = allBlocks1p.toSet.toSeq
     val size1p = (unique1pBlocks.foldLeft(0d) { case (acc, b) =>
       acc + b.size / 1024d / 1024d
     } / 1024d).toInt
 
-    val areTheSame =
-      unique10pBlocks.size == unique1pBlocks.size && unique10pBlocks.forall(
-        unique1pBlocks.contains)
+    println(s"Number of files read for t=10%: ${unique10pBlocks.size}, total size: $size10p")
+    println(s"Number of files read for t=1%: ${unique1pBlocks.size}, total size: $size1p")
 
-    print(s"Are the same blocks? $areTheSame")
-
-    println(s"Number of files read for t=10%: ${files10p.size}, total size: $size10p")
-
-    println(s"Number of files read for t=1%: ${files1p.size}, total size: $size1p")
-
-    fractionFiles
+    (unique10pBlocks.map(sourcePath + _.path), unique1pBlocks.map(sourcePath + _.path))
   }
 
-  def addApproximationError(fractionFiles: Seq[RowWithPaths]): Seq[RowWithPaths] = {
-    val numRows = fractionFiles.size
-    var cnt = 0
-    fractionFiles.map { r =>
-      cnt += 1
-      println(s"""row number: $cnt / $numRows,
-           |fraction10p: ${r.fraction10p}, fraction1p: ${r.fraction1p},
-           |${r.groupFilter}""".stripMargin)
-      val (est10p, error10p) = computeAvgError(r.paths10p, r.groupFilter, r.avg)
-      val (est1p, error1p) = computeAvgError(r.paths1p, r.groupFilter, r.avg)
-      r.copy(estAvg10p = est10p, estAvg1p = est1p, avgError10p = error10p, avgError1p = error1p)
-    }
-  }
+  def addApproxAvgAndError(
+      groupFractions: DataFrame,
+      uniqueFiles10p: Seq[String],
+      uniqueFiles1p: Seq[String]): DataFrame = {
 
-  def computeAvgError(
-      sampleFiles: Seq[String],
-      groupFilter: String,
-      average: Double): (Double, Double) = {
-    val outputRow = spark.read
-      .format("parquet")
-      .load(sampleFiles: _*)
-      .where(groupFilter)
-      .agg(avg("changed_files"))
-      .collect()
-      .head
+    val estimation10p = (
+      spark.read
+        .format("parquet")
+        .load(uniqueFiles10p: _*)
+        .groupBy("repo_main_language", "year")
+        .agg(avg("changed_files").alias("estAvg10p"))
+        .withColumnRenamed("year", "year10p")
+    )
 
-    if (outputRow.isNullAt(0)) {
-      println(outputRow)
-      (-1, -1)
-    } else {
-      val sampleAvg = outputRow.getDouble(0)
-      val error = if (average == 0.0) {
-        0.0
-      } else {
-        Math.abs(average - sampleAvg) / average
-      }
-      (sampleAvg, error)
-    }
-  }
+    val estimation1p = (
+      spark.read
+        .format("parquet")
+        .load(uniqueFiles1p: _*)
+        .groupBy("repo_main_language", "year")
+        .agg(avg("changed_files").alias("estAvg1p"))
+        .withColumnRenamed("year", "year1p")
+    )
 
-}
+    val columns = groupFractions.columns ++ Seq("estAvg10p", "estAvg1p")
 
-case class RowWithPaths(
-    language: Any,
-    year: Any,
-    avg: Double,
-    std: Double,
-    cnt: Int,
-    fraction10p: Double,
-    fraction1p: Double,
-    changed_files: String,
-    paths10p: Seq[String],
-    paths1p: Seq[String],
-    groupFilter: String,
-    estAvg10p: Double = 0.0,
-    estAvg1p: Double = 0.0,
-    avgError10p: Double = 0.0,
-    avgError1p: Double = 0.0)
+    (
+      groupFractions
+        .join(
+          estimation10p,
+          groupFractions("language") === estimation10p("repo_main_language") && groupFractions(
+            "year") === estimation10p("year10p"),
+          "left")
+        .join(
+          estimation1p,
+          groupFractions("language") === estimation1p("repo_main_language") && groupFractions(
+            "year") === estimation1p("year1p"),
+          "left")
+        .select(columns.map(c => col(c)): _*)
+        .withColumn("avgError10p", abs(col("avg") - col("estAvg10p")) / col("avg"))
+        .withColumn("avgError1p", abs(col("avg") - col("estAvg1p")) / col("avg"))
+    )
 
-object RowWithPaths {
-
-  def unapply(r: RowWithPaths): Option[Tuple15[
-    String,
-    Int,
-    Double,
-    Double,
-    Int,
-    Double,
-    Double,
-    String,
-    Seq[String],
-    Seq[String],
-    String,
-    Double,
-    Double,
-    Double,
-    Double]] = {
-    Some(
-      (
-        r.language.asInstanceOf[String],
-        if (r.year == null) -1 else r.year.asInstanceOf[Int],
-        r.avg,
-        r.std,
-        r.cnt,
-        r.fraction10p,
-        r.fraction1p,
-        r.changed_files,
-        r.paths10p,
-        r.paths1p,
-        r.groupFilter,
-        r.estAvg10p,
-        r.estAvg1p,
-        r.avgError10p,
-        r.avgError1p))
   }
 
 }
