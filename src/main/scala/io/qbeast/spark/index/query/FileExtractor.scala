@@ -10,14 +10,6 @@ import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.delta.DeltaLog
 
-// scalastyle:off
-// Steps:
-// 1. Read root cube and use its files as the initial sample s
-// 2. For each of target group in s, compute the sample size and the files or cubes to read to satisfy the tolerance
-// 3. Get the union of files S to read from all groups
-// 4. Read data from S and use it as the starting point for the next iter until the tolerance
-// constraint is met for all groups
-
 class FileExtractor(spark: SparkSession, path: String) {
 
   val qbeastSnapshot: DeltaQbeastSnapshot = DeltaQbeastSnapshot(
@@ -46,10 +38,3 @@ class FileExtractor(spark: SparkSession, path: String) {
   }
 
 }
-
-//  def readRoot(qbeastSnapshot: QbeastSnapshot, path: String): DataFrame = {
-//    val rootStatus = qbeastSnapshot.loadLatestIndexStatus.cubesStatuses.values.head
-//    val rootPath = rootStatus.files.map(_.path).head
-//    val initialSample = spark.read.format("parquet").load(path + rootPath)
-//    initialSample
-//  }
