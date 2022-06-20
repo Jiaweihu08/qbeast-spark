@@ -33,11 +33,13 @@ class FileExtractor(spark: SparkSession, path: String) {
       new QueryExecutor(querySpecBuilder, qbeastSnapshot)
 
     if (fraction < 1.0) {
+      // If it's a valid fraction, then find cubes using weight range only
       val weightRange = WeightRange(Weight.MinValue, Weight(fraction))
       queryExecutor.executeRevision(
         querySpec.copy(weightRange = weightRange, querySpace = AllSpace()),
         indexStatus)
     } else {
+      // Otherwise, find cubes that contain the target group via query space
       val weightRange = WeightRange(Weight.MinValue, Weight.MaxValue)
       queryExecutor.executeRevision(querySpec.copy(weightRange = weightRange), indexStatus)
     }
