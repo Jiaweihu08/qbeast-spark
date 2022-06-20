@@ -191,13 +191,13 @@ object SinglePassOTreeDataAnalyzer extends OTreeDataAnalyzer with Serializable {
         .mapValues(cubeWeights => 1.0 / cubeWeights.map(1.0 / _.normalizedWeight).sum)
 
     // scalastyle:off
-//    val dcs = indexStatus.revision.desiredCubeSize
-//    val partitionCubeCount = partitionedEstimatedCubeWeights.length
-//    println(s""">>> SinglePass;
-//         |desiredCubeSize: $dcs,
-//         |Number of partition cubes: $partitionCubeCount,
-//         |Number of final estimated cubes: ${estimatedCubeWeights.size}
-//         |""".stripMargin.replaceAll("\n", ""))
+    val dcs = indexStatus.revision.desiredCubeSize
+    val partitionCubeCount = partitionedEstimatedCubeWeights.length
+    println(s""">>> SinglePass;
+         |desiredCubeSize: $dcs,
+         |Number of partition cubes: $partitionCubeCount,
+         |Number of final estimated cubes: ${estimatedCubeWeights.size}
+         |""".stripMargin.replaceAll("\n", ""))
 
 //    val runtime = System.currentTimeMillis() - startTime
 //    println(">>>>>>>>>>>>>>")

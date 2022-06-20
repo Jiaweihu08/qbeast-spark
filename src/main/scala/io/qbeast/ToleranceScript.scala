@@ -17,26 +17,24 @@ object Script {
 
   def main(args: Array[String]): Unit = {
     val spark: SparkSession = SparkSession.builder().getOrCreate()
-
-    val sourcePath =
-      "s3a://qbeast-research/github-archive/qbeast-pr/double/changed_files_upperBound50/5000000/"
-    val fractionPath =
-      "s3a://qbeast-research/github-archive/qbeast-pr/double/changed_files_upperBound50/groupFractions/"
-
     val script = new ToleranceScript(spark)
 
+    val fractionPath =
+      "s3a://qbeast-research/github-archive/qbeast-pr/double/changed_files_upperBound50/groupFractions/"
     val groupFractions = (spark.read
       .format("csv")
       .option("header", "true")
       .option("inferSchema", "true")
       .load(fractionPath))
 
+    val sourcePath =
+      "s3a://qbeast-research/github-archive/qbeast-pr/double/changed_files_upperBound50/5000000/"
     val (paths10p, paths1p) = script.gatherFractionFiles(sourcePath, groupFractions)
 
     val withEstimationAndError = script.addApproxAvgAndError(groupFractions, paths10p, paths1p)
 
     withEstimationAndError.write.parquet(
-      "s3a://qbeast-research/github-archive/qbeast-pr/double/changed_files_upperBound50/withError/")
+      "s3a://qbeast-research/github-archive/qbeast-pr/double/changed_files_upperBound50/withError3M/")
   }
 
 }
@@ -89,15 +87,10 @@ class ToleranceScript(spark: SparkSession) {
       .save(targetPath)
   }
 
-  def computeGroupFractions(
-      sourcePath: String,
-      fractionPath: String,
-      columnName: String): Unit = {
-    val pr = spark.read.format("qbeast").load(sourcePath)
-
+  def computeGroupFractions(pr: DataFrame, fractionPath: String, columnName: String): Unit = {
     pr.createOrReplaceTempView("pr")
 
-    val statsDf_limit50 = spark.sql(s"""
+    val stats = spark.sql(s"""
          |SELECT
          |repo_main_language AS language,
          |year,
@@ -111,7 +104,7 @@ class ToleranceScript(spark: SparkSession) {
          |repo_main_language, year
          |""".stripMargin)
 
-    statsDf_limit50.createOrReplaceTempView("stats")
+    stats.createOrReplaceTempView("stats")
 
     val groupSamplingFraction = spark.sql(s"""
           |SELECT
@@ -218,6 +211,18 @@ class ToleranceScript(spark: SparkSession) {
         .withColumn("avgError1p", abs(col("avg") - col("estAvg1p")) / col("avg"))
     )
 
+  }
+
+  def showDfFromPaths(
+      sourcePath: String,
+      extractor: FileExtractor,
+      filterString: String,
+      f: Double): Unit = {
+    val paths =
+      extractor.getSamplingBlocks(f, Seq(expr(filterString).expr)).map(sourcePath + _.path)
+    val groupDf = spark.read.format("parquet").load(paths: _*)
+
+    groupDf.where(filterString).show()
   }
 
 }
