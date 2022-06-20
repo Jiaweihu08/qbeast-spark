@@ -27,18 +27,20 @@ class FileExtractor(spark: SparkSession, path: String) {
   val indexStatus: IndexStatus = qbeastSnapshot.loadIndexStatus(revision.revisionID)
 
   def getSamplingBlocks(fraction: Double, expressions: Seq[Expression]): IISeq[QbeastBlock] = {
-    val weightRange = if (fraction < 1.0) {
-      WeightRange(Weight.MinValue, Weight(fraction))
-    } else {
-      WeightRange(Weight.MinValue, Weight.MaxValue)
-    }
-
     val querySpecBuilder = new QuerySpecBuilder(expressions)
     val querySpec: QuerySpec = querySpecBuilder.build(revision)
     val queryExecutor =
       new QueryExecutor(querySpecBuilder, qbeastSnapshot)
 
-    queryExecutor.executeRevision(querySpec.copy(weightRange = weightRange), indexStatus)
+    if (fraction < 1.0) {
+      val weightRange = WeightRange(Weight.MinValue, Weight(fraction))
+      queryExecutor.executeRevision(
+        querySpec.copy(weightRange = weightRange, querySpace = AllSpace()),
+        indexStatus)
+    } else {
+      val weightRange = WeightRange(Weight.MinValue, Weight.MaxValue)
+      queryExecutor.executeRevision(querySpec.copy(weightRange = weightRange), indexStatus)
+    }
   }
 
 }
