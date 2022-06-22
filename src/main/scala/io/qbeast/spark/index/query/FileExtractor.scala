@@ -15,8 +15,8 @@ class FileExtractor(spark: SparkSession, path: String) {
   val qbeastSnapshot: DeltaQbeastSnapshot = DeltaQbeastSnapshot(
     DeltaLog.forTable(spark, path).snapshot)
 
-  val revision: Revision = qbeastSnapshot.loadAllRevisions.head
-  val indexStatus: IndexStatus = qbeastSnapshot.loadIndexStatus(revision.revisionID)
+  val revision: Revision = qbeastSnapshot.loadLatestRevision
+  val indexStatus: IndexStatus = qbeastSnapshot.loadLatestIndexStatus
 
   def getSamplingBlocks(fraction: Double, expressions: Seq[Expression]): IISeq[QbeastBlock] = {
     val querySpecBuilder = new QuerySpecBuilder(expressions)

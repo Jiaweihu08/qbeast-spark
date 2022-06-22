@@ -213,16 +213,4 @@ class ToleranceScript(spark: SparkSession) {
 
   }
 
-  def showDfFromPaths(
-      sourcePath: String,
-      extractor: FileExtractor,
-      filterString: String,
-      f: Double): Unit = {
-    val paths =
-      extractor.getSamplingBlocks(f, Seq(expr(filterString).expr)).map(sourcePath + _.path)
-    val groupDf = spark.read.format("parquet").load(paths: _*)
-
-    groupDf.where(filterString).show()
-  }
-
 }
