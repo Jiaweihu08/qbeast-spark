@@ -18,23 +18,21 @@ class FileExtractor(spark: SparkSession, path: String) {
   val revision: Revision = qbeastSnapshot.loadLatestRevision
   val indexStatus: IndexStatus = qbeastSnapshot.loadLatestIndexStatus
 
-  def getSamplingBlocks(fraction: Double, expressions: Seq[Expression]): IISeq[QbeastBlock] = {
+  def getSamplingBlocks(
+      fraction: Double,
+      expressions: Seq[Expression],
+      threshold: Double = 1.0): IISeq[QbeastBlock] = {
     val querySpecBuilder = new QuerySpecBuilder(expressions)
-    val querySpec: QuerySpec = querySpecBuilder.build(revision)
+    var querySpec: QuerySpec = querySpecBuilder.build(revision)
     val queryExecutor =
       new QueryExecutor(querySpecBuilder, qbeastSnapshot)
 
-    if (fraction < 1.0) {
-      // If it's a valid fraction, then find cubes using weight range only
+    if (fraction < threshold) {
       val weightRange = WeightRange(Weight.MinValue, Weight(fraction))
-      queryExecutor.executeRevision(
-        querySpec.copy(weightRange = weightRange, querySpace = AllSpace()),
-        indexStatus)
-    } else {
-      // Otherwise, find cubes that contain the target group via query space
-      val weightRange = WeightRange(Weight.MinValue, Weight.MaxValue)
-      queryExecutor.executeRevision(querySpec.copy(weightRange = weightRange), indexStatus)
+      querySpec = querySpec.copy(weightRange = weightRange)
     }
+
+    queryExecutor.executeRevision(querySpec, indexStatus)
   }
 
 }

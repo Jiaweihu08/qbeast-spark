@@ -10,7 +10,7 @@ import org.apache.spark.sql.functions._
 import org.apache.spark.sql.{DataFrame, Row, SparkSession}
 
 import scala.collection.mutable
-
+// import io.qbeast.ToleranceScript
 // scalastyle:off
 
 object Script {
@@ -19,28 +19,44 @@ object Script {
     val spark: SparkSession = SparkSession.builder().getOrCreate()
     val script = new ToleranceScript(spark)
 
-    val fractionPath =
-      "s3a://qbeast-research/github-archive/qbeast-pr/double/changed_files_upperBound50/groupFractions/"
-    val groupFractions = (spark.read
-      .format("csv")
-      .option("header", "true")
-      .option("inferSchema", "true")
-      .load(fractionPath))
-
     val sourcePath =
-      "s3a://qbeast-research/github-archive/qbeast-pr/double/changed_files_upperBound50/5000000/"
-    val (paths10p, paths1p) = script.gatherFractionFiles(sourcePath, groupFractions)
+      "s3a://qbeast-research/github-archive/qbeast-pr/double/changed_files_upperBound50/nullAsInt/treeCols/5000000/"
 
-    val withEstimationAndError = script.addApproxAvgAndError(groupFractions, paths10p, paths1p)
+    val pr = spark.read.parquet(sourcePath)
 
-    withEstimationAndError.write.parquet(
-      "s3a://qbeast-research/github-archive/qbeast-pr/double/changed_files_upperBound50/withError3M/")
+    //    val fractionPath =
+//      "s3a://qbeast-research/github-archive/qbeast-pr/double/changed_files_upperBound50/nullAsInt/groupFractions/"
+
+//    val groupFractions = (spark.read
+//      .format("csv")
+//      .option("header", "true")
+//      .option("inferSchema", "true")
+//      .load(fractionPath))
+
+    val tol = 0.2
+    val groupFractions = script.computeGroupFraction(pr, tol)
+
+    groupFractions.withColumn("worthIt", col("fraction") < 1.0).groupBy("worthIt").count.show
+
+    val groups = groupFractions.collect()
+
+    val filePaths = script.gatherFractionFiles(sourcePath, groups, tol)
+
+    val withEstimationAndError = script.addApproxAvgAndError(groupFractions, filePaths, tol)
+
+    withEstimationAndError.show
+
+//    withEstimationAndError.write.parquet(
+//      "s3a://qbeast-research/github-archive/qbeast-pr/double/changed_files_upperBound50/nullAsInt/treeCols/errors/")
+//
+//    spark.read.parquet(
+//      "s3a://qbeast-research/github-archive/qbeast-pr/double/changed_files_upperBound50/nullAsInt/treeCols/errors/")
   }
 
 }
 
 class ToleranceScript(spark: SparkSession) {
-  val columnsToIndex = "repo_main_language,year"
+  val columnsToIndex = "repo_main_language,year,repo_id"
   val targetColumns = Seq("added_rows", "deleted_rows", "changed_files")
   val implementations = Seq("double", "piecewiseSeq", "single")
 
@@ -70,6 +86,7 @@ class ToleranceScript(spark: SparkSession) {
     val isValidTargetColumn = targetColumns.contains(targetColumn)
 
     assert(isValidImp && isValidTargetColumn, "Input not valid, try again")
+
     val pr =
       spark.read
         .format("parquet")
@@ -87,7 +104,12 @@ class ToleranceScript(spark: SparkSession) {
       .save(targetPath)
   }
 
-  def computeGroupFractions(pr: DataFrame, fractionPath: String, columnName: String): Unit = {
+  def computeGroupFraction(
+      pr: DataFrame,
+      tol: Double,
+      columnName: String = "changed_files"): DataFrame = {
+    assert(tol < 1.0, s"Invalid tol value: $tol >= 1.0")
+
     pr.createOrReplaceTempView("pr")
 
     val stats = spark.sql(s"""
@@ -111,104 +133,85 @@ class ToleranceScript(spark: SparkSession) {
           |language,
           |year,
           |avg, std, cnt,
-          |samplingFraction(cnt, avg, std, 0.1) AS 10p_fraction,
-          |samplingFraction(cnt, avg, std, 0.01) AS 1p_fraction,
+          |samplingFraction(cnt, avg, std, $tol) AS fraction,
           |'$columnName'
           |FROM
           |stats
           |""".stripMargin)
 
-    groupSamplingFraction.show()
-
-    groupSamplingFraction.write.option("header", "true").csv(fractionPath)
-
+    groupSamplingFraction
   }
 
-  def gatherFractionFiles(
-      sourcePath: String,
-      groupFractions: DataFrame): (Seq[String], Seq[String]) = {
+  def gatherFractionFiles(sourcePath: String, groups: Seq[Row], tol: Double): Seq[String] = {
+    assert(tol < 1.0, s"Invalid tolerance: $tol >= 1.0")
+
     val extractor = new FileExtractor(spark, sourcePath)
+    val allBlocks = mutable.ArrayBuffer.empty[QbeastBlock]
 
-    val rows = groupFractions.collect()
-    val allBlocks10p = mutable.ArrayBuffer.empty[QbeastBlock]
-    val allBlocks1p = mutable.ArrayBuffer.empty[QbeastBlock]
+    var maxSize = 0
+    groups.foreach { case Row(language, year, _, _, _, fraction: Double, _) =>
+      val groupFilter = (language, year) match {
+        case (l: String, y: Int) => s"""repo_main_language == "$l" AND year == $y"""
+        case (null, y: Int) => s"repo_main_language IS NULL AND year == $y"
+        case (l: String, null) => s"""repo_main_language == "$l" AND year IS NULL"""
+        case (null, null) => s"repo_main_language IS NULL AND year IS NULL"
+        case _ =>
+          println(">>> Shit happening")
+          "Shit happening"
+      }
 
-    rows.foreach {
-      case Row(language, year, _, _, _, fraction10p: Double, fraction1p: Double, _) =>
-        val groupFilter = (language, year) match {
-          case (l: String, y: Int) => s"""repo_main_language == "$l" AND year == $y"""
-          case (null, y: Int) => s"repo_main_language IS NULL AND year == $y"
-          case (l: String, null) => s"""repo_main_language == "$l" AND year IS NULL"""
-          case (null, null) => s"repo_main_language IS NULL AND year IS NULL"
-          case _ =>
-            println(">>> Shit happening")
-            "Shit happening"
-        }
+      val expressions = Seq(expr(groupFilter).expr)
+      val f = if (fraction < 0.5) fraction else 0.5
+      val blocks = extractor.getSamplingBlocks(f, expressions)
+      allBlocks ++= blocks
+      if (blocks.size > 30) {
+        if (fraction >= 1.0) println(">>>")
+        println(s"Row($language, $year, $fraction), ${blocks.size}")
+      }
 
-        val expressions = Seq(expr(groupFilter).expr)
-        val blocks10p = extractor.getSamplingBlocks(fraction10p, expressions)
-        val blocks1p = extractor.getSamplingBlocks(fraction1p, expressions)
-
-        allBlocks10p ++= blocks10p
-        allBlocks1p ++= blocks1p
+      if (blocks.size > maxSize) {
+        maxSize = blocks.size
+      }
     }
+    println(s"Max number of blocks: $maxSize")
 
-    val unique10pBlocks = allBlocks10p.toSet.toSeq
-    val size10p = (unique10pBlocks.foldLeft(0d) { case (acc, b) =>
+    val uniqueBlocks = allBlocks.toSet.toSeq
+    val size = (uniqueBlocks.foldLeft(0d) { case (acc, b) =>
       acc + b.size / 1024d / 1024d
     } / 1024d).toInt
 
-    val unique1pBlocks = allBlocks1p.toSet.toSeq
-    val size1p = (unique1pBlocks.foldLeft(0d) { case (acc, b) =>
-      acc + b.size / 1024d / 1024d
-    } / 1024d).toInt
+    println(s"Number of files read for t=$tol: ${uniqueBlocks.size}, total size: $size GB")
 
-    println(s"Number of files read for t=10%: ${unique10pBlocks.size}, total size: $size10p")
-    println(s"Number of files read for t=1%: ${unique1pBlocks.size}, total size: $size1p")
-
-    (unique10pBlocks.map(sourcePath + _.path), unique1pBlocks.map(sourcePath + _.path))
+    uniqueBlocks.map(sourcePath + _.path)
   }
 
   def addApproxAvgAndError(
       groupFractions: DataFrame,
-      uniqueFiles10p: Seq[String],
-      uniqueFiles1p: Seq[String]): DataFrame = {
+      uniqueFiles: Seq[String],
+      tol: Double): DataFrame = {
+    val estColName = s"estAvg($tol)"
+    val errorColName = s"avgError($tol)"
 
-    val estimation10p = (
+    val estimation = (
       spark.read
         .format("parquet")
-        .load(uniqueFiles10p: _*)
+        .load(uniqueFiles: _*)
         .groupBy("repo_main_language", "year")
-        .agg(avg("changed_files").alias("estAvg10p"))
-        .withColumnRenamed("year", "year10p")
+        .agg(avg("changed_files").alias(estColName))
+        .withColumnRenamed("year", "estYear")
     )
 
-    val estimation1p = (
-      spark.read
-        .format("parquet")
-        .load(uniqueFiles1p: _*)
-        .groupBy("repo_main_language", "year")
-        .agg(avg("changed_files").alias("estAvg1p"))
-        .withColumnRenamed("year", "year1p")
-    )
-
-    val columns = groupFractions.columns ++ Seq("estAvg10p", "estAvg1p")
+    val columns = groupFractions.columns ++ Seq("estAvg10p") map col
 
     (
       groupFractions
         .join(
-          estimation10p,
-          groupFractions("language") === estimation10p("repo_main_language") && groupFractions(
-            "year") === estimation10p("year10p"),
+          estimation,
+          groupFractions("language") <=> estimation("repo_main_language") && groupFractions(
+            "year") <=> estimation("estYear"),
           "left")
-        .join(
-          estimation1p,
-          groupFractions("language") === estimation1p("repo_main_language") && groupFractions(
-            "year") === estimation1p("year1p"),
-          "left")
-        .select(columns.map(c => col(c)): _*)
-        .withColumn("avgError10p", abs(col("avg") - col("estAvg10p")) / col("avg"))
-        .withColumn("avgError1p", abs(col("avg") - col("estAvg1p")) / col("avg"))
+        .select(columns: _*)
+        .withColumn(errorColName, abs(col("avg") - col(estColName)) / col("avg"))
     )
 
   }
