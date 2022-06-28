@@ -10,7 +10,7 @@ import org.apache.spark.sql.functions._
 import org.apache.spark.sql.{DataFrame, Row, SparkSession}
 
 import scala.collection.mutable
-// import io.qbeast.ToleranceScript
+
 // scalastyle:off
 
 object Script {
@@ -21,10 +21,9 @@ object Script {
 
     val sourcePath =
       "s3a://qbeast-research/github-archive/qbeast-pr/double/changed_files_upperBound50/nullAsInt/treeCols/5000000/"
-
     val pr = spark.read.parquet(sourcePath)
 
-    //    val fractionPath =
+//    val fractionPath =
 //      "s3a://qbeast-research/github-archive/qbeast-pr/double/changed_files_upperBound50/nullAsInt/groupFractions/"
 
 //    val groupFractions = (spark.read
@@ -33,32 +32,22 @@ object Script {
 //      .option("inferSchema", "true")
 //      .load(fractionPath))
 
-    val tol = 0.2
-    val groupFractions = script.computeGroupFraction(pr, tol)
+    val tol = 0.1
+    val groupsWithFraction = script.computeGroupFraction(pr, tol)
+    val groups = groupsWithFraction.collect()
 
-    groupFractions.withColumn("worthIt", col("fraction") < 1.0).groupBy("worthIt").count.show
-
-    val groups = groupFractions.collect()
-
-    val filePaths = script.gatherFractionFiles(sourcePath, groups, tol)
-
-    val withEstimationAndError = script.addApproxAvgAndError(groupFractions, filePaths, tol)
-
-    withEstimationAndError.show
-
-//    withEstimationAndError.write.parquet(
-//      "s3a://qbeast-research/github-archive/qbeast-pr/double/changed_files_upperBound50/nullAsInt/treeCols/errors/")
-//
-//    spark.read.parquet(
-//      "s3a://qbeast-research/github-archive/qbeast-pr/double/changed_files_upperBound50/nullAsInt/treeCols/errors/")
+    Seq(1.0, 0.7, 0.5, 0.3).foreach { t =>
+      val uniqueFiles = script.gatherFractionFiles(sourcePath, groups, tol, t)
+      val withEstimationAndError =
+        script.addApproxAvgAndError(groupsWithFraction, uniqueFiles, tol)
+      withEstimationAndError.groupBy("isErrorBounded").count.show
+    }
   }
 
 }
 
-class ToleranceScript(spark: SparkSession) {
-  val columnsToIndex = "repo_main_language,year,repo_id"
+class ToleranceScript(spark: SparkSession) extends Serializable {
   val targetColumns = Seq("added_rows", "deleted_rows", "changed_files")
-  val implementations = Seq("double", "piecewiseSeq", "single")
 
   def groupSampleSize(cnt: Long, avg: Double, std: Double, tol: Double): Double = {
     if (cnt <= 30d) {
@@ -74,82 +63,39 @@ class ToleranceScript(spark: SparkSession) {
   val samplingFraction: UserDefinedFunction =
     udf((cnt: Long, avg: Double, std: Double, tol: Double) => groupSampleSize(cnt, avg, std, tol))
 
-  spark.udf.register("samplingFraction", samplingFraction)
-
-  def writeWithLimit(
-      sourcePath: String,
-      imp: String,
-      dcs: String,
-      targetColumn: String,
-      upperBound: Int): Unit = {
-    val isValidImp = implementations.contains(imp)
-    val isValidTargetColumn = targetColumns.contains(targetColumn)
-
-    assert(isValidImp && isValidTargetColumn, "Input not valid, try again")
-
-    val pr =
-      spark.read
-        .format("parquet")
-        .load(sourcePath)
-
-    val targetPath =
-      s"s3a://qbeast-research/github-archive/qbeast-pr/$imp/$targetColumn/withLimit$upperBound/$dcs/"
-
-    pr.where(s"$targetColumn <= $upperBound")
-      .write
-      .format("qbeast")
-      .option("analyzerImp", imp)
-      .option("columnsToIndex", columnsToIndex)
-      .option("cubeSize", dcs)
-      .save(targetPath)
-  }
-
   def computeGroupFraction(
       pr: DataFrame,
       tol: Double,
       columnName: String = "changed_files"): DataFrame = {
     assert(tol < 1.0, s"Invalid tol value: $tol >= 1.0")
+    assert(targetColumns.contains(columnName), s"Invalid target column: $columnName")
 
-    pr.createOrReplaceTempView("pr")
+    val groupsWithFraction = (
+      pr
+        .groupBy("repo_main_language", "year")
+        .agg(
+          count(columnName).alias("cnt"),
+          avg(columnName).alias("avg"),
+          stddev_pop(columnName).alias("std"))
+        .withColumn("fraction", samplingFraction(col("cnt"), col("avg"), col("std"), lit(tol)))
+        .withColumnRenamed("repo_main_language", "language")
+    )
 
-    val stats = spark.sql(s"""
-         |SELECT
-         |repo_main_language AS language,
-         |year,
-         |COUNT($columnName) AS cnt,
-         |AVG($columnName) AS avg,
-         |STDDEV_POP($columnName) AS std,
-         |'$columnName'
-         |FROM
-         |pr
-         |GROUP BY
-         |repo_main_language, year
-         |""".stripMargin)
-
-    stats.createOrReplaceTempView("stats")
-
-    val groupSamplingFraction = spark.sql(s"""
-          |SELECT
-          |language,
-          |year,
-          |avg, std, cnt,
-          |samplingFraction(cnt, avg, std, $tol) AS fraction,
-          |'$columnName'
-          |FROM
-          |stats
-          |""".stripMargin)
-
-    groupSamplingFraction
+    groupsWithFraction
   }
 
-  def gatherFractionFiles(sourcePath: String, groups: Seq[Row], tol: Double): Seq[String] = {
+  def gatherFractionFiles(
+      sourcePath: String,
+      groups: Seq[Row],
+      tol: Double,
+      threshold: Double = 1.0): Seq[String] = {
     assert(tol < 1.0, s"Invalid tolerance: $tol >= 1.0")
+    assert(threshold <= 1.0, s"Invalid threshold: $threshold > 1.0")
 
     val extractor = new FileExtractor(spark, sourcePath)
-    val allBlocks = mutable.ArrayBuffer.empty[QbeastBlock]
+    val allBlocks = mutable.ArrayBuffer.empty[IISeq[QbeastBlock]]
 
-    var maxSize = 0
-    groups.foreach { case Row(language, year, _, _, _, fraction: Double, _) =>
+    groups.foreach { case Row(language, year, _, _, _, fraction: Double) =>
       val groupFilter = (language, year) match {
         case (l: String, y: Int) => s"""repo_main_language == "$l" AND year == $y"""
         case (null, y: Int) => s"repo_main_language IS NULL AND year == $y"
@@ -161,59 +107,91 @@ class ToleranceScript(spark: SparkSession) {
       }
 
       val expressions = Seq(expr(groupFilter).expr)
-      val f = if (fraction < 0.5) fraction else 0.5
-      val blocks = extractor.getSamplingBlocks(f, expressions)
-      allBlocks ++= blocks
-      if (blocks.size > 30) {
-        if (fraction >= 1.0) println(">>>")
-        println(s"Row($language, $year, $fraction), ${blocks.size}")
-      }
+      val blocks = extractor.getSamplingBlocks(fraction.min(threshold), expressions)
 
-      if (blocks.size > maxSize) {
-        maxSize = blocks.size
-      }
+      allBlocks += blocks
     }
-    println(s"Max number of blocks: $maxSize")
 
-    val uniqueBlocks = allBlocks.toSet.toSeq
-    val size = (uniqueBlocks.foldLeft(0d) { case (acc, b) =>
+    val uniqueBlocks = allBlocks.flatten.toSet.toSeq
+
+    val size = ((uniqueBlocks.foldLeft(0d) { case (acc, b) =>
       acc + b.size / 1024d / 1024d
-    } / 1024d).toInt
+    } / 1024d) * 10).toInt / 10d
 
-    println(s"Number of files read for t=$tol: ${uniqueBlocks.size}, total size: $size GB")
+    var isValid = 0
+    var notValid = 0
+    groups.foreach(r => if (r.getDouble(5) < threshold) isValid += 1 else notValid += 1)
+
+    println(s"Valid fractions: $isValid, invalid fractions: $notValid")
+    println(
+      s"Number of files read for t=$tol: ${uniqueBlocks.size}, threshold: $threshold, total size: ${size}GB")
+    println(s"Max number of blocks: ${allBlocks.map(_.size).max}")
 
     uniqueBlocks.map(sourcePath + _.path)
   }
 
   def addApproxAvgAndError(
-      groupFractions: DataFrame,
+      groupsWithFraction: DataFrame,
       uniqueFiles: Seq[String],
       tol: Double): DataFrame = {
-    val estColName = s"estAvg($tol)"
-    val errorColName = s"avgError($tol)"
 
     val estimation = (
       spark.read
         .format("parquet")
         .load(uniqueFiles: _*)
         .groupBy("repo_main_language", "year")
-        .agg(avg("changed_files").alias(estColName))
+        .agg(avg("changed_files").alias("estAvg"))
         .withColumnRenamed("year", "estYear")
     )
 
-    val columns = groupFractions.columns ++ Seq("estAvg10p") map col
+    val columns = groupsWithFraction.columns :+ "estAvg" map col
 
     (
-      groupFractions
+      groupsWithFraction
         .join(
           estimation,
-          groupFractions("language") <=> estimation("repo_main_language") && groupFractions(
-            "year") <=> estimation("estYear"),
+          groupsWithFraction("language") <=> estimation("repo_main_language") &&
+            groupsWithFraction("year") <=> estimation("estYear"),
           "left")
         .select(columns: _*)
-        .withColumn(errorColName, abs(col("avg") - col(estColName)) / col("avg"))
+        .withColumn("avgError", abs(col("avg") - col("estAvg")) / col("avg"))
+        .orderBy(desc("avgError"))
+        .withColumn("isErrorBounded", col("avgError") < lit(tol))
     )
 
+  }
+
+}
+
+object WriteWithLimit {
+  val columnsToIndex = "repo_main_language,year,pr_id"
+  val targetColumns = Seq("added_rows", "deleted_rows", "changed_files")
+  val implementations = Seq("double", "piecewiseSeq", "single")
+  val spark: SparkSession = SparkSession.builder().getOrCreate()
+
+  def writeWithLimit(
+      sourcePath: String,
+      imp: String,
+      dcs: String,
+      targetColumn: String,
+      upperBound: Int): Unit = {
+    assert(
+      implementations.contains(imp) && targetColumns.contains(targetColumn),
+      "Input not valid, try again")
+
+    val targetPath =
+      s"s3a://qbeast-research/github-archive/qbeast-pr/$imp/$targetColumn/withLimit$upperBound/$dcs/"
+
+    spark.read
+      .format("parquet")
+      .load(sourcePath)
+      .where(s"$targetColumn <= $upperBound")
+      .write
+      .format("qbeast")
+      .option("analyzerImp", imp)
+      .option("columnsToIndex", columnsToIndex)
+      .option("cubeSize", dcs)
+      .save(targetPath)
   }
 
 }
