@@ -6,7 +6,11 @@ package io.qbeast.spark.index
 import io.qbeast.IISeq
 import io.qbeast.core.model.{BroadcastedTableChanges, _}
 import io.qbeast.core.transform.Transformer
-import io.qbeast.spark.index.QbeastColumns.{cubeToReplicateColumnName, weightColumnName}
+import io.qbeast.spark.index.QbeastColumns.{
+  columnNames,
+  cubeToReplicateColumnName,
+  weightColumnName
+}
 import io.qbeast.spark.internal.QbeastFunctions.qbeastHash
 import org.apache.spark.qbeast.config.CUBE_WEIGHTS_BUFFER_CAPACITY
 import org.apache.spark.sql.functions._
@@ -93,9 +97,8 @@ object DoublePassOTreeDataAnalyzer extends OTreeDataAnalyzer with Serializable {
 
   private[index] def addRandomWeight(revision: Revision): DataFrame => DataFrame =
     (df: DataFrame) => {
-      df.withColumn(
-        weightColumnName,
-        qbeastHash(revision.columnTransformers.map(name => df(name.columnName)): _*))
+      val columns = df.columns.filterNot(columnNames.contains)
+      df.withColumn(weightColumnName, qbeastHash(columns.map(col): _*))
     }
 
   private[index] def estimateCubeWeights(
@@ -205,13 +208,13 @@ object DoublePassOTreeDataAnalyzer extends OTreeDataAnalyzer with Serializable {
         .toMap
 
     // scalastyle:off
-    val dcs = indexStatus.revision.desiredCubeSize
-    val partitionCubeCount = partitionedEstimatedCubeWeights.count()
-    println(s""">>> DoublePass; 
-         |desiredCubeSize: $dcs, 
-         |Number of partition cubes: $partitionCubeCount, 
-         |Number of final estimated cubes: ${estimatedCubeWeights.size}
-         |""".stripMargin.replaceAll("\n", ""))
+//    val dcs = indexStatus.revision.desiredCubeSize
+//    val partitionCubeCount = partitionedEstimatedCubeWeights.count()
+//    println(s""">>> DoublePass;
+//         |desiredCubeSize: $dcs,
+//         |Number of partition cubes: $partitionCubeCount,
+//         |Number of final estimated cubes: ${estimatedCubeWeights.size}
+//         |""".stripMargin.replaceAll("\n", ""))
 
     // Gather the new changes
     val tableChanges = BroadcastedTableChanges(
