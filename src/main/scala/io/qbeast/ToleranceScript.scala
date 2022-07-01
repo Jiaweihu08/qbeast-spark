@@ -36,12 +36,10 @@ object Script {
     val groupsWithFraction = script.computeGroupFraction(pr, tol)
     val groups = groupsWithFraction.collect()
 
-    Seq(1.0, 0.7, 0.5, 0.3).foreach { t =>
-      val uniqueFiles = script.gatherFractionFiles(sourcePath, groups, tol, t)
-      val withEstimationAndError =
-        script.addApproxAvgAndError(groupsWithFraction, uniqueFiles, tol)
-      withEstimationAndError.groupBy("isErrorBounded").count.show
-    }
+    val uniqueFiles = script.gatherFractionFiles(sourcePath, groups, tol)
+    val withEstimationAndError =
+      script.addApproxAvgAndError(groupsWithFraction, uniqueFiles, tol)
+    withEstimationAndError.groupBy("isErrorBounded").count.show
   }
 
 }
@@ -84,13 +82,8 @@ class ToleranceScript(spark: SparkSession) extends Serializable {
     groupsWithFraction
   }
 
-  def gatherFractionFiles(
-      sourcePath: String,
-      groups: Seq[Row],
-      tol: Double,
-      threshold: Double = 1.0): Seq[String] = {
+  def gatherFractionFiles(sourcePath: String, groups: Seq[Row], tol: Double): Seq[String] = {
     assert(tol < 1.0, s"Invalid tolerance: $tol >= 1.0")
-    assert(threshold <= 1.0, s"Invalid threshold: $threshold > 1.0")
 
     val extractor = new FileExtractor(spark, sourcePath)
     val allBlocks = mutable.ArrayBuffer.empty[IISeq[QbeastBlock]]
@@ -107,7 +100,7 @@ class ToleranceScript(spark: SparkSession) extends Serializable {
       }
 
       val expressions = Seq(expr(groupFilter).expr)
-      val blocks = extractor.getSamplingBlocks(fraction.min(threshold), expressions)
+      val blocks = extractor.getSamplingBlocks(fraction, expressions)
 
       allBlocks += blocks
     }
@@ -120,11 +113,10 @@ class ToleranceScript(spark: SparkSession) extends Serializable {
 
     var isValid = 0
     var notValid = 0
-    groups.foreach(r => if (r.getDouble(5) < threshold) isValid += 1 else notValid += 1)
+    groups.foreach(r => if (r.getDouble(5) < 1.0) isValid += 1 else notValid += 1)
 
     println(s"Valid fractions: $isValid, invalid fractions: $notValid")
-    println(
-      s"Number of files read for t=$tol: ${uniqueBlocks.size}, threshold: $threshold, total size: ${size}GB")
+    println(s"Number of files read for t=$tol: ${uniqueBlocks.size}, total size: ${size}GB")
     println(s"Max number of blocks: ${allBlocks.map(_.size).max}")
 
     uniqueBlocks.map(sourcePath + _.path)
@@ -171,16 +163,17 @@ object WriteWithLimit {
 
   def writeWithLimit(
       sourcePath: String,
-      imp: String,
-      dcs: String,
-      targetColumn: String,
-      upperBound: Int): Unit = {
+      imp: String = "double",
+      dcs: String = "5000000",
+      targetColumn: String = "changed_files",
+      upperBound: Int = 50): Unit = {
     assert(
       implementations.contains(imp) && targetColumns.contains(targetColumn),
       "Input not valid, try again")
 
     val targetPath =
-      s"s3a://qbeast-research/github-archive/qbeast-pr/$imp/$targetColumn/withLimit$upperBound/$dcs/"
+      s"s3a://qbeast-research/github-archive/qbeast-pr/$imp/${targetColumn}withLimit$upperBound/${columnsToIndex.size}cols/$dcs/"
+    println(s"Saving to $targetPath")
 
     spark.read
       .format("parquet")
