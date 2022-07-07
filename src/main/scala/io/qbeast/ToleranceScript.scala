@@ -65,25 +65,17 @@ object Script {
     val metrics = QbeastTable.forPath(spark, path).getIndexMetrics()
     println(metrics)
 
-    // println("Cube maxWeight per level.")
-
     val cubeStatuses = metrics.cubeStatuses
-    val innerCubesStatuses =
+    val targetCubesStatuses =
       if (isInner) cubeStatuses.filter(_._1.children.exists(cubeStatuses.contains))
       else cubeStatuses
 
-    // (cubeId, status)
-    // cubeStatuses.toSeq.sortBy(_._1).foreach(c => println(s"cube: ${c._1}, weight: ${c._2.normalizedWeight}, count: ${c._2.files.map(_.elementCount).sum}"))
-
-    innerCubesStatuses
+    targetCubesStatuses
       .groupBy(cw => cw._1.depth)
       .mapValues { m =>
-        val info = m.values.map { st =>
-          (st.cubeId.string, st.normalizedWeight, st.files.map(f => f.elementCount).sum)
-        }
-        val meanWeight = info.map { case (cube, weight, cnt) => weight }.sum / info.size
-        val meanCount = info.map { case (_, _, cnt) => cnt }.sum / info.size
-        (meanWeight, meanCount)
+        val weights = m.values.map(_.normalizedWeight)
+        val elementCounts = m.values.map(_.files.map(_.elementCount).sum)
+        (weights.sum / weights.size, elementCounts.sum / elementCounts.size)
       }
       .toSeq
       .sortBy(_._1)

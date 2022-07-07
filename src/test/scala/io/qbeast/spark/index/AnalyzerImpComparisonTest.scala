@@ -5,19 +5,25 @@ import org.apache.spark.sql.SparkSession
 
 class AnalyzerImpComparisonTest extends QbeastIntegrationTestSpec {
 
+  // scalastyle:off println
   private def showMetrics(spark: SparkSession, path: String): Unit = {
-    // scalastyle:off println
     val metrics = QbeastTable.forPath(spark, path).getIndexMetrics()
-
     println(metrics)
-    println("Average maxWeight per level.")
 
-    metrics.cubeStatuses
+    val cubeStatuses = metrics.cubeStatuses
+    val innerCubeStatuses =
+      metrics.cubeStatuses.filter(cw => cw._1.children.exists(cubeStatuses.contains))
+
+    innerCubeStatuses
       .groupBy(cw => cw._1.depth)
-      .mapValues(m => m.values.map(st => st.maxWeight.fraction).sum / m.size)
+      .mapValues { m =>
+        val weights = m.values.map(_.normalizedWeight)
+        val elementCounts = m.values.map(_.files.map(_.elementCount).sum)
+        (weights.sum / weights.size, elementCounts.sum / elementCounts.size)
+      }
       .toSeq
       .sortBy(_._1)
-      .foreach(println)
+      .foreach { cw => println(s"$cw\n") }
   }
 
   val dataSource = "./src/test/resources/ecommerce300k_2019_Nov.csv"
@@ -28,7 +34,7 @@ class AnalyzerImpComparisonTest extends QbeastIntegrationTestSpec {
         val singlePath = tmpDir + "/single"
         val doublePath = tmpDir + "/double"
 
-        val cs = 5000
+        val cs = 10000
         val columnsToIndex = "event_time,user_id,price,product_id"
 
         val df = spark.read
@@ -36,6 +42,7 @@ class AnalyzerImpComparisonTest extends QbeastIntegrationTestSpec {
           .option("header", true)
           .option("inferSchema", true)
           .load(dataSource)
+          .repartition(15)
 
         spark.time(
           df.write
