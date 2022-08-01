@@ -53,14 +53,14 @@ object SequentialWriter extends Serializable {
 
   private[index] def piecewiseSequentialOTreeIndexing(
       dataToIndex: DataFrame,
-      level: Int,
+      levelStringSize: Int,
       desiredCubeSize: Int,
       dimensionCount: Int): (DataFrame, Map[String, Int]) = {
     import spark.implicits._
 
     // DF with cube string corresponding to the current level
     val leveledData = dataToIndex
-      .withColumn("levelCube", col(cubeColumnName).substr(0, level))
+      .withColumn("levelCube", col(cubeColumnName).substr(0, levelStringSize))
 
     // Level cube string and its estimated weight cut. This is used to reduce the number
     // of elements involved in the window rank operation.
@@ -149,41 +149,41 @@ object SequentialWriter extends Serializable {
     var tableChanges =
       BroadcastedTableChanges(spaceChanges, indexStatus, cubeWeights, Set.empty[CubeId])
 
+    val levelStringStepSize = revision.createCubeIdRoot().children.next.string.length
     var remainingData = dataToWrite
     var continue = true
     var level = 0
 
-    while (true) {
+    while (continue) {
+      remainingData.cache()
+
       val (indexedData, levelCubeWeights) = piecewiseSequentialOTreeIndexing(
         remainingData,
-        level,
+        level * levelStringStepSize,
         revision.desiredCubeSize,
         dimensionCount)
 
       // If no cubeWeights is returned, it means that the input remainingData is empty
       // Process finished
       if (levelCubeWeights.isEmpty) {
-        return (tableChanges, fileActions.toIndexedSeq)
-      }
-
-      // Add levelCubeWeights and write the level cubes
-      cubeWeights ++= levelCubeWeights.map { case (k, v) =>
-        (CubeId(dimensionCount, k), NormalizedWeight(Weight(v)))
-      }
-      tableChanges =
-        BroadcastedTableChanges(spaceChanges, indexStatus, cubeWeights, Set.empty[CubeId])
-
-      // Writing level cubes
-      fileActions ++= dataWriter.write(tableID, schema, indexedData, tableChanges)
-
-      // Filter dataToWrite to get the remainingData
-      val levelDataEliminator = new MaxWeightMapper(levelCubeWeights)
-      remainingData =
-        dataToWrite.transform(levelDataEliminator.filterPreviousRecords(level, dimensionCount))
-
-      level += 1
-      if (level > maxOTreeHeight) {
         continue = false
+      } else {
+        // Add levelCubeWeights and write the level cubes
+        cubeWeights ++= levelCubeWeights.map { case (cubeString, w) =>
+          (CubeId(dimensionCount, cubeString), NormalizedWeight(Weight(w)))
+        }
+        tableChanges =
+          BroadcastedTableChanges(spaceChanges, indexStatus, cubeWeights, Set.empty[CubeId])
+
+        // Writing level cubes
+        fileActions ++= dataWriter.write(tableID, schema, indexedData, tableChanges)
+
+        // Filter dataToWrite to get the remainingData
+        val levelDataEliminator = new MaxWeightMapper(levelCubeWeights)
+        remainingData =
+          dataToWrite.transform(levelDataEliminator.filterPreviousRecords(level, dimensionCount))
+
+        level += 1
       }
     }
     (tableChanges, fileActions.toIndexedSeq)
