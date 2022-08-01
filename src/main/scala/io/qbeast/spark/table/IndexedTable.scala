@@ -6,7 +6,7 @@ package io.qbeast.spark.table
 import io.qbeast.core.keeper.Keeper
 import io.qbeast.core.model._
 import io.qbeast.spark.delta.CubeDataLoader
-import io.qbeast.spark.index.QbeastColumns
+import io.qbeast.spark.index.{PiecewiseSequentialIndexer, QbeastColumns}
 import io.qbeast.spark.internal.QbeastOptions
 import io.qbeast.spark.internal.sources.QbeastBaseRelation
 import org.apache.spark.qbeast.config.DEFAULT_NUMBER_OF_RETRIES
@@ -235,10 +235,12 @@ private[table] class IndexedTableImpl(
 
     val schema = data.schema
     metadataManager.updateWithTransaction(tableID, schema, append) {
-      val (qbeastData, tableChanges) =
-        indexManager.index(data, indexStatus)
-      val fileActions = dataWriter.write(tableID, schema, qbeastData, tableChanges)
-      (tableChanges, fileActions)
+      PiecewiseSequentialIndexer.oTreeSequentialWrite(
+        dataWriter,
+        schema,
+        tableID,
+        data,
+        indexStatus)
     }
 
   }
