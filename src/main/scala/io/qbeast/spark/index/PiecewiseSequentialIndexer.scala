@@ -21,6 +21,7 @@ import org.apache.spark.sql.expressions.{UserDefinedFunction, Window}
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.{DataFrame, SparkSession}
+import org.apache.spark.storage.StorageLevel
 
 object PiecewiseSequentialIndexer extends Serializable {
   lazy val spark: SparkSession = SparkSession.active
@@ -140,33 +141,34 @@ object PiecewiseSequentialIndexer extends Serializable {
     var level = 0
 
     while (continue) {
-      remainingData.cache()
-
+      val cubeStringLength = level * levelStringStepSize
       val (indexedData, levelCubeWeights) = piecewiseSequentialOTreeIndexing(
         remainingData,
-        level * levelStringStepSize,
+        cubeStringLength,
         revision.desiredCubeSize,
         dimensionCount)
 
-      // If no cubeWeights is returned, it means that the input remainingData is empty
-      // Process finished
+      // No cube weights will be return if remainingData is empty, end process
       if (levelCubeWeights.isEmpty) {
         continue = false
       } else {
-        // Add levelCubeWeights and write the level cubes
+        // Add levelCubeWeights
         cubeWeights ++= levelCubeWeights.map { case (cubeString, w) =>
           (CubeId(dimensionCount, cubeString), NormalizedWeight(Weight(w)))
         }
         tableChanges =
           BroadcastedTableChanges(spaceChanges, indexStatus, cubeWeights, Set.empty[CubeId])
 
-        // Writing level cubes
+        // Write level cubes
         fileActions ++= dataWriter.write(tableID, schema, indexedData, tableChanges)
 
         // Filter dataToWrite to get the remainingData i.e. elements to be placed in the subtree
         val subtreeExtractor = new SubtreeExtractor(levelCubeWeights)
-        remainingData = dataToWrite.transform(
-          subtreeExtractor.filterPreviousRecords(level * levelStringStepSize, dimensionCount))
+        val subtreeData = remainingData.transform(
+          subtreeExtractor.filterSubtree(cubeStringLength, dimensionCount))
+
+        remainingData.unpersist()
+        remainingData = subtreeData.persist(StorageLevel.DISK_ONLY)
 
         level += 1
       }
@@ -180,6 +182,8 @@ class SubtreeExtractor(levelCubeWeights: Map[String, Int]) extends Serializable 
   val levelCubeStringName = "levelCubeString"
 
   val isFromCurrentIter: UserDefinedFunction = {
+    // All cubes from the current level that contains at least 1 record
+    // are present in levelCubeWeights.
     udf((levelCubeString: String) => levelCubeWeights.contains(levelCubeString))
   }
 
@@ -189,22 +193,16 @@ class SubtreeExtractor(levelCubeWeights: Map[String, Int]) extends Serializable 
     })
   }
 
-  def filterPreviousRecords(
-      levelCubeStringLength: Int,
-      dimensionCount: Int): DataFrame => DataFrame =
-    (dataToWrite: DataFrame) => {
-      dataToWrite
-        .withColumn(
-          levelCubeStringName,
-          col(cubeColumnName).substr(0, levelCubeStringLength)
-        ) // Map rows to cubes from the current level
-        .filter(
-          isFromCurrentIter(col(levelCubeStringName))
-        ) // Required by Spark, actually not necessary for the logic
+  def filterSubtree(levelCubeStringLength: Int, dimensionCount: Int): DataFrame => DataFrame =
+    (data: DataFrame) => {
+      data
+        // Map rows to cubes from the current level
+        .withColumn(levelCubeStringName, col(cubeColumnName).substr(0, levelCubeStringLength))
+        // Filter rows from previous iterations
+        .filter(isFromCurrentIter(col(levelCubeStringName)))
         .withColumn("maxWeight", levelWeight(col(levelCubeStringName)))
-        .filter(
-          col(weightColumnName) > col("maxWeight")
-        ) // Elements from the subtree have weights > maxWeight
+        // Filter for subtree elements e.g. weight > maxWeight
+        .filter(col(weightColumnName) > col("maxWeight"))
         .drop(levelCubeStringName)
         .drop("maxWeight")
     }
