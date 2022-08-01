@@ -21,7 +21,6 @@ import org.apache.spark.sql.expressions.{UserDefinedFunction, Window}
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.{DataFrame, SparkSession}
-import org.apache.spark.storage.StorageLevel
 
 object PiecewiseSequentialIndexer extends Serializable {
   lazy val spark: SparkSession = SparkSession.active
@@ -142,6 +141,8 @@ object PiecewiseSequentialIndexer extends Serializable {
 
     while (continue) {
       val cubeStringLength = level * levelStringStepSize
+
+      // Extract data from the current level and the associated cube weights
       val (indexedData, levelCubeWeights) = piecewiseSequentialOTreeIndexing(
         remainingData,
         cubeStringLength,
@@ -164,11 +165,8 @@ object PiecewiseSequentialIndexer extends Serializable {
 
         // Filter dataToWrite to get the remainingData i.e. elements to be placed in the subtree
         val subtreeExtractor = new SubtreeExtractor(levelCubeWeights)
-        val subtreeData = remainingData.transform(
-          subtreeExtractor.filterSubtree(cubeStringLength, dimensionCount))
-
-        remainingData.unpersist()
-        remainingData = subtreeData.persist(StorageLevel.DISK_ONLY)
+        remainingData =
+          dataToWrite.transform(subtreeExtractor.filterSubtree(cubeStringLength, dimensionCount))
 
         level += 1
       }
@@ -183,7 +181,8 @@ class SubtreeExtractor(levelCubeWeights: Map[String, Int]) extends Serializable 
 
   val isFromCurrentIter: UserDefinedFunction = {
     // All cubes from the current level that contains at least 1 record
-    // are present in levelCubeWeights.
+    // are present in levelCubeWeights. Records from the upper part of the tree
+    // are to be filtered out
     udf((levelCubeString: String) => levelCubeWeights.contains(levelCubeString))
   }
 
