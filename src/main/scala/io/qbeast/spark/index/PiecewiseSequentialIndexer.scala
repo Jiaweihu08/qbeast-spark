@@ -13,7 +13,7 @@ import io.qbeast.spark.index.DoublePassOTreeDataAnalyzer.{
 import io.qbeast.spark.index.QbeastColumns.{cubeColumnName, weightColumnName}
 import io.qbeast.spark.index.SequentialIndexingUtils.{
   addCubeId,
-  calculateTreeHeight,
+  computeTreeDepth,
   cubeStringToBytes
 }
 import org.apache.spark.sql.delta.actions.FileAction
@@ -39,7 +39,7 @@ object PiecewiseSequentialIndexer extends Serializable {
     val levelWeightCut = df
       .groupBy(levelCubeStringName)
       .count()
-      .select(col(levelCubeStringName), lit(desiredCubeSize * 2.0) / col("count"))
+      .select(col(levelCubeStringName), lit(desiredCubeSize * 5.0) / col("count"))
       .map(row => (row.getString(0), Weight(row.getDouble(1)).value))
       .toDF(levelCubeStringName, "weightCut")
 
@@ -50,7 +50,7 @@ object PiecewiseSequentialIndexer extends Serializable {
       .repartition(col(levelCubeStringName))
   }
 
-  private[index] def piecewiseSequentialOTreeIndexing(
+  private[index] def piecewiseSequentialIndexing(
       dataToIndex: DataFrame,
       levelStringSize: Int,
       desiredCubeSize: Int,
@@ -120,13 +120,13 @@ object PiecewiseSequentialIndexer extends Serializable {
     }
 
     val dimensionCount = revision.columnTransformers.size
-    val maxOTreeHeight =
-      calculateTreeHeight(numElements, revision.desiredCubeSize, dimensionCount)
+    val maxDepth =
+      computeTreeDepth(numElements, revision.desiredCubeSize, dimensionCount)
 
     val dataToWrite =
       dataFrame
         .transform(addRandomWeight(revision))
-        .transform(addCubeId(revision, maxOTreeHeight))
+        .transform(addCubeId(revision, maxDepth))
 
     // Unfolding the dataset to write level by level and aggregate metadata
     var fileActions = Seq.empty[FileAction]
@@ -134,40 +134,40 @@ object PiecewiseSequentialIndexer extends Serializable {
     var tableChanges =
       BroadcastedTableChanges(spaceChanges, indexStatus, cubeWeights, Set.empty[CubeId])
 
-    val levelStringStepSize = revision.createCubeIdRoot().children.next.string.length
+    val encodingSize = revision.createCubeIdRoot().children.next.string.length
     var remainingData = dataToWrite
     var continue = true
     var level = 0
 
     while (continue) {
-      val cubeStringLength = level * levelStringStepSize
+      val levelEncodingSize = level * encodingSize
 
       // Extract data from the current level and the associated cube weights
-      val (indexedData, levelCubeWeights) = piecewiseSequentialOTreeIndexing(
+      val (currentLevelData, levelCubeWeights) = piecewiseSequentialIndexing(
         remainingData,
-        cubeStringLength,
+        levelEncodingSize,
         revision.desiredCubeSize,
         dimensionCount)
 
-      // No cube weights will be return if remainingData is empty, end process
-      if (levelCubeWeights.isEmpty) {
+      // Either all data are written or the deepest level is reached
+      if (levelCubeWeights.isEmpty || level > maxDepth) {
         continue = false
       } else {
         // Add levelCubeWeights
         cubeWeights ++= levelCubeWeights.map { case (cubeString, w) =>
           (CubeId(dimensionCount, cubeString), NormalizedWeight(Weight(w)))
         }
+
+        // Update tc
         tableChanges =
           BroadcastedTableChanges(spaceChanges, indexStatus, cubeWeights, Set.empty[CubeId])
 
         // Write level cubes
-        fileActions ++= dataWriter.write(tableID, schema, indexedData, tableChanges)
+        fileActions ++= dataWriter.write(tableID, schema, currentLevelData, tableChanges)
 
         // Filter dataToWrite to get the remainingData i.e. elements to be placed in the subtree
         val subtreeExtractor = new SubtreeExtractor(levelCubeWeights)
-        remainingData =
-          dataToWrite.transform(subtreeExtractor.filterSubtree(cubeStringLength, dimensionCount))
-
+        remainingData = dataToWrite.transform(subtreeExtractor.filterSubtree(levelEncodingSize))
         level += 1
       }
     }
@@ -192,11 +192,11 @@ class SubtreeExtractor(levelCubeWeights: Map[String, Int]) extends Serializable 
     })
   }
 
-  def filterSubtree(levelCubeStringLength: Int, dimensionCount: Int): DataFrame => DataFrame =
+  def filterSubtree(levelEncodingSize: Int): DataFrame => DataFrame =
     (data: DataFrame) => {
       data
         // Map rows to cubes from the current level
-        .withColumn(levelCubeStringName, col(cubeColumnName).substr(0, levelCubeStringLength))
+        .withColumn(levelCubeStringName, col(cubeColumnName).substr(0, levelEncodingSize))
         // Filter rows from previous iterations
         .filter(isFromCurrentIter(col(levelCubeStringName)))
         .withColumn("maxWeight", levelWeight(col(levelCubeStringName)))
