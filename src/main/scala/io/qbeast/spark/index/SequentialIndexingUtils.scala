@@ -11,28 +11,26 @@ import org.apache.spark.sql.functions.{col, struct, udf}
 
 object SequentialIndexingUtils {
 
-  def calculateTreeHeight(elementCount: Long, desiredCubeSize: Long, dimensionCount: Int): Int = {
-    val securitySurplus = 15
+  def computeTargetDepth(elementCount: Long, desiredCubeSize: Long, dimensionCount: Int): Int = {
+    val sf = 5
+    val avgFanoutEst = math.pow(2, dimensionCount) / 2
+    val cubeCount = elementCount.toDouble / desiredCubeSize
 
-    val maxFanout = math.pow(2, dimensionCount)
-    val cubeCount = elementCount / desiredCubeSize
+    val treeDepthEst = logOfBase(avgFanoutEst, 1 - cubeCount * (1 - avgFanoutEst)) - 1
 
-    val perfectTreeHeight = logOfBase(maxFanout, 1 - cubeCount * (1 - maxFanout)) - 1
-
-    perfectTreeHeight.toInt + securitySurplus
+    treeDepthEst.toInt + sf
   }
 
   def logOfBase(base: Double, value: Double): Double = {
     math.log10(value) / math.log10(base)
   }
 
-  def addCubeId(revision: Revision, treeHeight: Int): DataFrame => DataFrame =
+  def addCubeId(revision: Revision, maxDepth: Int): DataFrame => DataFrame =
     (df: DataFrame) => {
-      val columnsToIndex = revision.columnTransformers.map(_.columnName)
-      val pointCubeMapper = new PointCubeMapper(revision, treeHeight)
-      df.withColumn(
-        cubeColumnName,
-        pointCubeMapper.cubeFromTargetDepth(struct(columnsToIndex.map(col): _*)))
+      val rowStruct = struct(
+        revision.columnTransformers.map(column => col(column.columnName)): _*)
+      val pointCubeMapper = new PointCubeMapper(revision, maxDepth)
+      df.withColumn(cubeColumnName, pointCubeMapper.cubeFromTargetDepth(rowStruct))
     }
 
   val cubeStringToBytes: UserDefinedFunction = {
@@ -41,12 +39,12 @@ object SequentialIndexingUtils {
 
 }
 
-class PointCubeMapper(revision: Revision, targetDepth: Int) extends Serializable {
+class PointCubeMapper(revision: Revision, maxDepth: Int) extends Serializable {
 
   val cubeFromTargetDepth: UserDefinedFunction = {
     udf((row: Row) => {
       val point = RowUtils.rowValuesToPoint(row, revision)
-      CubeId.container(point, targetDepth).string
+      CubeId.container(point, maxDepth).string
     })
   }
 
