@@ -15,6 +15,7 @@ import io.qbeast.core.model.WeightRange
 import io.qbeast.IndexedColumns
 import org.apache.spark.sql.execution.datasources.HadoopFsRelation
 import io.qbeast.spark.delta.OTreeIndex
+import io.qbeast.spark.index.QbeastColumns.columnNames
 
 /**
  * Rule class that transforms a Sample operator over a QbeastRelation
@@ -48,8 +49,7 @@ class SampleRule(spark: SparkSession) extends Rule[LogicalPlan] with Logging {
 
     val weightRange = extractWeightRange(sample)
 
-    val columns =
-      indexedColumns.map(c => logicalRelation.output.find(_.name == c).get)
+    val columns = logicalRelation.output.filterNot(c => columnNames.contains(c.name))
     val qbeastHash = new QbeastMurmur3Hash(columns)
 
     Filter(
