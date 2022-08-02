@@ -20,26 +20,27 @@ import org.apache.spark.sql.delta.actions.FileAction
 import org.apache.spark.sql.expressions.{UserDefinedFunction, Window}
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types.StructType
-import org.apache.spark.sql.{DataFrame, SparkSession}
+import org.apache.spark.sql.{DataFrame, Dataset, SparkSession}
 
 object PiecewiseSequentialIndexer extends Serializable {
   lazy val spark: SparkSession = SparkSession.active
   val levelCubeStringName = "levelCubeString"
 
   private[index] def computeLevelCandidates(
-      levelStringLength: Int,
+      level: Int,
+      encodingLength: Int,
       desiredCubeSize: Int): DataFrame => DataFrame = (data: DataFrame) => {
     import spark.implicits._
 
     // Add column to represent which cube from the current level each row belongs to
     val df =
-      data.withColumn(levelCubeStringName, col(cubeColumnName).substr(0, levelStringLength))
+      data.withColumn(levelCubeStringName, col(cubeColumnName).substr(0, level * encodingLength))
 
     // Find weight cut to reduce the number of records to work on
     val levelWeightCut = df
       .groupBy(levelCubeStringName)
       .count()
-      .select(col(levelCubeStringName), lit(desiredCubeSize * 5.0) / col("count"))
+      .select(col(levelCubeStringName), lit(desiredCubeSize * (level + 3)) / col("count"))
       .map(row => (row.getString(0), Weight(row.getDouble(1)).value))
       .toDF(levelCubeStringName, "weightCut")
 
@@ -50,46 +51,65 @@ object PiecewiseSequentialIndexer extends Serializable {
       .repartition(col(levelCubeStringName))
   }
 
+  private[index] def findLevelElements(desiredCubeSize: Int): DataFrame => DataFrame =
+    (candidates: DataFrame) => {
+      val levelElemWindowSpec = Window.partitionBy(levelCubeStringName).orderBy(weightColumnName)
+      candidates
+        .withColumn("posInPayload", rank.over(levelElemWindowSpec))
+        .where(s"posInPayload <= $desiredCubeSize")
+    }
+
+  private[index] def computeCubeWeights(): DataFrame => Dataset[(String, Int)] =
+    (levelElems: DataFrame) => {
+      import spark.implicits._
+
+      val levelCubeWeightsWindowSpec =
+        Window.partitionBy(levelCubeStringName).orderBy(desc(weightColumnName))
+
+      levelElems
+        .withColumn("weightRank", rank.over(levelCubeWeightsWindowSpec))
+        .select(col(levelCubeStringName), col(weightColumnName).as("maxWeight"))
+        .where("weightRank == 1")
+        .map { row =>
+          val cube = row.getAs[String](levelCubeStringName)
+          val weight = row.getAs[Int]("maxWeight")
+          (cube, weight)
+        }
+    }
+
+  private[index] def findIndexedData(dimensionCount: Int): DataFrame => DataFrame =
+    (levelElems: DataFrame) => {
+      levelElems
+        .drop(cubeColumnName)
+        .withColumn(
+          cubeColumnName,
+          cubeStringToBytes(col(levelCubeStringName), lit(dimensionCount)))
+        .drop(levelCubeStringName)
+        .drop("posInPayload")
+    }
+
   private[index] def piecewiseSequentialIndexing(
       dataToIndex: DataFrame,
-      levelStringSize: Int,
+      level: Int,
+      encodingLength: Int,
       desiredCubeSize: Int,
       dimensionCount: Int): (DataFrame, Map[String, Int]) = {
-    import spark.implicits._
 
     // Filter candidates for the current level using weight cut
     val levelCandidates =
-      dataToIndex.transform(computeLevelCandidates(levelStringSize, desiredCubeSize))
+      dataToIndex.transform(computeLevelCandidates(level, encodingLength, desiredCubeSize))
 
     // Select elements for the current level
-    val levelElemWindowSpec = Window.partitionBy(levelCubeStringName).orderBy(weightColumnName)
-    val levelElems = levelCandidates
-      .withColumn("posInPayload", rank.over(levelElemWindowSpec))
-      .where(s"posInPayload <= $desiredCubeSize")
+    val levelElems = levelCandidates.transform(findLevelElements(desiredCubeSize))
 
     // Compute level cube weights
-    val levelCubeWeightsWindowSpec =
-      Window.partitionBy(levelCubeStringName).orderBy(desc(weightColumnName))
     val cubeWeightMap = levelElems
-      .withColumn("weightRank", rank.over(levelCubeWeightsWindowSpec))
-      .select(col(levelCubeStringName), col(weightColumnName).as("maxWeight"))
-      .where("weightRank == 1")
-      .map { row =>
-        val cube = row.getAs[String](levelCubeStringName)
-        val weight = row.getAs[Int]("maxWeight")
-        (cube, weight)
-      }
+      .transform(computeCubeWeights())
       .collect()
       .toMap
 
     // Data to be written
-    val indexedData = levelElems
-      .drop(cubeColumnName)
-      .withColumn(
-        cubeColumnName,
-        cubeStringToBytes(col(levelCubeStringName), lit(dimensionCount)))
-      .drop(levelCubeStringName)
-      .drop("posInPayload")
+    val indexedData = levelElems.transform(findIndexedData(dimensionCount))
 
     (indexedData, cubeWeightMap)
   }
@@ -134,18 +154,19 @@ object PiecewiseSequentialIndexer extends Serializable {
     var tableChanges =
       BroadcastedTableChanges(spaceChanges, indexStatus, cubeWeights, Set.empty[CubeId])
 
-    val encodingSize = revision.createCubeIdRoot().children.next.string.length
+    val encodingLength = revision.createCubeIdRoot().children.next.string.length
     var remainingData = dataToWrite
     var continue = true
     var level = 0
 
     while (continue) {
-      val levelEncodingSize = level * encodingSize
+      val levelEncodingSize = level * encodingLength
 
       // Extract data from the current level and the associated cube weights
       val (currentLevelData, levelCubeWeights) = piecewiseSequentialIndexing(
         remainingData,
-        levelEncodingSize,
+        level,
+        encodingLength,
         revision.desiredCubeSize,
         dimensionCount)
 
