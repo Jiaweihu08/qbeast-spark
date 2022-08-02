@@ -11,7 +11,7 @@ import org.apache.spark.sql.functions.{col, struct, udf}
 
 object SequentialIndexingUtils {
 
-  def computeTargetDepth(elementCount: Long, desiredCubeSize: Long, dimensionCount: Int): Int = {
+  def computeTreeDepth(elementCount: Long, desiredCubeSize: Long, dimensionCount: Int): Int = {
     val sf = 5
     val avgFanoutEst = math.pow(2, dimensionCount) / 2
     val cubeCount = elementCount.toDouble / desiredCubeSize
