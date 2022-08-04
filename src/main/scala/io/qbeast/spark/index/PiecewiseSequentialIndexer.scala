@@ -36,28 +36,29 @@ object PiecewiseSequentialIndexer extends Serializable {
     val df =
       data.withColumn(levelCubeStringName, col(cubeColumnName).substr(0, level * encodingLength))
 
-    if (level <= 2) {
-      df
-    } else {
-      // Find weight cut to reduce the number of records to work on
-      val levelWeightCut = df
-        .groupBy(levelCubeStringName)
-        .count()
-        .select(col(levelCubeStringName), lit(desiredCubeSize * 5.0) / col("count"))
-        .map(row => (row.getString(0), Weight(row.getDouble(1)).value))
-        .toDF(levelCubeStringName, "weightCut")
+    // Find weight cut to reduce the number of records to work on
+    // Caution: in order for this to work well we have to taking into account the current level
+    // we are operating on. When level is high, the weight cut may produce a number of rows smaller
+    // than the desiredCubeSize for each cube since the records with a lower weight are already
+    // written and removed from df.
+    val levelWeightCut = df
+      .groupBy(levelCubeStringName)
+      .count()
+      .select(col(levelCubeStringName), lit(desiredCubeSize * (level + 5.0)) / col("count"))
+      .map(row => (row.getString(0), Weight(row.getDouble(1)).value))
+      .toDF(levelCubeStringName, "weightCut")
 
-      // Filter records with larger weights
-      df.join(levelWeightCut, levelCubeStringName)
-        .filter(col(weightColumnName) <= col("weightCut"))
-        .drop("weightCut")
-        .repartition(col(levelCubeStringName))
-    }
+    // Filter records with larger weights
+    df.join(levelWeightCut, levelCubeStringName)
+      .filter(col(weightColumnName) <= col("weightCut"))
+      .drop("weightCut")
+      .repartition(col(levelCubeStringName))
   }
 
   private[index] def findLevelElements(desiredCubeSize: Int): DataFrame => DataFrame =
     (candidates: DataFrame) => {
       val levelElemWindowSpec = Window.partitionBy(levelCubeStringName).orderBy(weightColumnName)
+
       candidates
         .withColumn("posInPayload", rank.over(levelElemWindowSpec))
         .where(s"posInPayload <= $desiredCubeSize")
@@ -219,13 +220,20 @@ class SubtreeExtractor(levelCubeWeights: Map[String, Int]) extends Serializable 
 
   def filterSubtree(levelEncodingSize: Int): DataFrame => DataFrame =
     (data: DataFrame) => {
+      // This is problematic for the sequential implementations since weights
+      // are determined after elements are collected, not the other way around.
+      // Using this way to cut rows would cause loosing elements because there
+      // can be elements with the same weight as maxWeight but belong to the subtree
+      // and now is cut by this method.
+      // However, we can assume that the likelihood of having all indexing columns
+      // as well as the weight to be the same is low.
       data
         // Map rows to cubes from the current level
         .withColumn(levelCubeStringName, col(cubeColumnName).substr(0, levelEncodingSize))
         // Filter rows from previous iterations
         .filter(isFromCurrentIter(col(levelCubeStringName)))
         .withColumn("maxWeight", levelWeight(col(levelCubeStringName)))
-        // Filter for subtree elements e.g. weight > maxWeight
+        // Filter for subtree elements i.g. weight > maxWeight
         .filter(col(weightColumnName) > col("maxWeight"))
         .drop(levelCubeStringName)
         .drop("maxWeight")
