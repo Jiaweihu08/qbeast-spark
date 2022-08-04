@@ -6,13 +6,14 @@ package io.qbeast
 import io.qbeast.spark.QbeastTable
 import org.apache.spark.sql.SparkSession
 
-object IndexTable {
+object WriteGhArchive {
 
   def main(args: Array[String]): Unit = {
     val spark: SparkSession = SparkSession.builder().getOrCreate()
 
     val sourcePath = "s3a://qbeast-research/github-archive/prWithYear/"
-    val targetPath = "s3a://qbeast-research/github-archive/qbeast-pr/piecewiseSeq/500k/"
+    val targetPath =
+      "s3a://qbeast-research/github-archive/qbeast-pr/piecewiseSeq-noWeightCut/500k/"
 
     val source = spark.read.parquet(sourcePath).where("changed_files <= 50")
     spark.time(
