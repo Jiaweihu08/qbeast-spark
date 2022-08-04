@@ -36,19 +36,23 @@ object PiecewiseSequentialIndexer extends Serializable {
     val df =
       data.withColumn(levelCubeStringName, col(cubeColumnName).substr(0, level * encodingLength))
 
-    // Find weight cut to reduce the number of records to work on
-    val levelWeightCut = df
-      .groupBy(levelCubeStringName)
-      .count()
-      .select(col(levelCubeStringName), lit(desiredCubeSize * (level + 5)) / col("count"))
-      .map(row => (row.getString(0), Weight(row.getDouble(1)).value))
-      .toDF(levelCubeStringName, "weightCut")
+    if (level <= 2) {
+      df
+    } else {
+      // Find weight cut to reduce the number of records to work on
+      val levelWeightCut = df
+        .groupBy(levelCubeStringName)
+        .count()
+        .select(col(levelCubeStringName), lit(desiredCubeSize * 5.0) / col("count"))
+        .map(row => (row.getString(0), Weight(row.getDouble(1)).value))
+        .toDF(levelCubeStringName, "weightCut")
 
-    // Filter records with larger weights
-    df.join(levelWeightCut, levelCubeStringName)
-      .filter(col(weightColumnName) <= col("weightCut"))
-      .drop("weightCut")
-      .repartition(col(levelCubeStringName))
+      // Filter records with larger weights
+      df.join(levelWeightCut, levelCubeStringName)
+        .filter(col(weightColumnName) <= col("weightCut"))
+        .drop("weightCut")
+        .repartition(col(levelCubeStringName))
+    }
   }
 
   private[index] def findLevelElements(desiredCubeSize: Int): DataFrame => DataFrame =
@@ -96,11 +100,8 @@ object PiecewiseSequentialIndexer extends Serializable {
       dimensionCount: Int): (DataFrame, Map[String, Int]) = {
 
     // Filter candidates for the current level using weight cut
-    val levelCandidates = dataToIndex.withColumn(
-      levelCubeStringName,
-      col(cubeColumnName).substr(0, level * encodingLength))
-//    val levelCandidates =
-//      dataToIndex.transform(computeLevelCandidates(level, encodingLength, desiredCubeSize))
+    val levelCandidates =
+      dataToIndex.transform(computeLevelCandidates(level, encodingLength, desiredCubeSize))
 
     // Select elements for the current level
     val levelElems = levelCandidates.transform(findLevelElements(desiredCubeSize))
