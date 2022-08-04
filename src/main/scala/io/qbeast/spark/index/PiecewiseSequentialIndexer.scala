@@ -40,7 +40,7 @@ object PiecewiseSequentialIndexer extends Serializable {
     val levelWeightCut = df
       .groupBy(levelCubeStringName)
       .count()
-      .select(col(levelCubeStringName), lit(desiredCubeSize * (level + 3)) / col("count"))
+      .select(col(levelCubeStringName), lit(desiredCubeSize * (level + 5)) / col("count"))
       .map(row => (row.getString(0), Weight(row.getDouble(1)).value))
       .toDF(levelCubeStringName, "weightCut")
 
@@ -96,8 +96,11 @@ object PiecewiseSequentialIndexer extends Serializable {
       dimensionCount: Int): (DataFrame, Map[String, Int]) = {
 
     // Filter candidates for the current level using weight cut
-    val levelCandidates =
-      dataToIndex.transform(computeLevelCandidates(level, encodingLength, desiredCubeSize))
+    val levelCandidates = dataToIndex.withColumn(
+      levelCubeStringName,
+      col(cubeColumnName).substr(0, level * encodingLength))
+//    val levelCandidates =
+//      dataToIndex.transform(computeLevelCandidates(level, encodingLength, desiredCubeSize))
 
     // Select elements for the current level
     val levelElems = levelCandidates.transform(findLevelElements(desiredCubeSize))
