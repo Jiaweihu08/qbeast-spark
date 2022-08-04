@@ -12,13 +12,12 @@ import org.apache.spark.sql.functions.{col, struct, udf}
 object SequentialIndexingUtils {
 
   def computeTreeDepth(elementCount: Long, desiredCubeSize: Long, dimensionCount: Int): Int = {
-    val sf = 5
-    val avgFanoutEst = math.pow(2, dimensionCount) / 2
+    // Low fanout to account for imbalanced datasets
+    val avgFanoutEst = 1.05 // math.pow(2, dimensionCount)
     val cubeCount = elementCount.toDouble / desiredCubeSize
-
     val treeDepthEst = logOfBase(avgFanoutEst, 1 - cubeCount * (1 - avgFanoutEst)) - 1
 
-    treeDepthEst.toInt + sf
+    treeDepthEst.toInt + 1
   }
 
   def logOfBase(base: Double, value: Double): Double = {
