@@ -45,11 +45,6 @@ object QbeastColumns {
   val revisionColumnName = "_qbeastRevision"
 
   /**
-   * Cube to replicate column name.
-   */
-  val cubeToReplicateColumnName = "_qbeastCubeToReplicate"
-
-  /**
    * Cube to rollup column name.
    */
   val fileUUIDColumnName = "_qbeastFileUUID"
@@ -64,7 +59,6 @@ object QbeastColumns {
     cubeColumnName,
     stateColumnName,
     revisionColumnName,
-    cubeToReplicateColumnName,
     fileUUIDColumnName,
     filenameColumnName)
 
@@ -93,7 +87,6 @@ object QbeastColumns {
       cubeColumnIndex = columnIndexes.getOrElse(cubeColumnName, -1),
       stateColumnIndex = columnIndexes.getOrElse(stateColumnName, -1),
       revisionColumnIndex = columnIndexes.getOrElse(revisionColumnName, -1),
-      cubeToReplicateColumnIndex = columnIndexes.getOrElse(cubeToReplicateColumnName, -1),
       fileUUIDColumnIndex = columnIndexes.getOrElse(fileUUIDColumnName, -1),
       filenameColumnIndex = columnIndexes.getOrElse(filenameColumnName, -1))
   }
@@ -132,8 +125,6 @@ object QbeastColumns {
  *   the state column index or -1 if it is missing
  * @param revisionColumnIndex
  *   the revision column index or -1 if it is missing
- * @param cubeToReplicateColumnIndex
- *   the cube to replicate column index or -1 if it is missing
  * @param fileUUIDColumnIndex
  *   target file UUID column index or -1 if it is missing
  * @param filenameColumnIndex
@@ -144,7 +135,6 @@ case class QbeastColumns(
     cubeColumnIndex: Int,
     stateColumnIndex: Int,
     revisionColumnIndex: Int,
-    cubeToReplicateColumnIndex: Int,
     fileUUIDColumnIndex: Int,
     filenameColumnIndex: Int) {
 
@@ -161,7 +151,6 @@ case class QbeastColumns(
     columnIndex == cubeColumnIndex ||
     columnIndex == stateColumnIndex ||
     columnIndex == revisionColumnIndex ||
-    columnIndex == cubeToReplicateColumnIndex ||
     columnIndex == fileUUIDColumnIndex ||
     columnIndex == filenameColumnIndex
   }
@@ -197,14 +186,6 @@ case class QbeastColumns(
    *   the revision column exists
    */
   def hasRevisionColumn: Boolean = revisionColumnIndex >= 0
-
-  /**
-   * Returns whether the cube to replicate column exists.
-   *
-   * @return
-   *   the cube to replicate column exists
-   */
-  def hasCubeToReplicateColumn: Boolean = cubeToReplicateColumnIndex >= 0
 
   /**
    * Returns whether the cube to rollup column exists.

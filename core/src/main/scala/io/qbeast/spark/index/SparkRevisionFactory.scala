@@ -43,7 +43,7 @@ object SparkRevisionFactory extends RevisionFactory {
    *   - If no column stats are provided, and manual stats are required, we use a
    *     ManualPlaceholderTransformation.
    *   - If manual column stats are provided, we create a Transformation with boundaries.
-   *   - If no column stats are provided, and no manual stats are required, we use an
+   *   - If no column stats is provided, and no manual stats are required, we use an
    *     EmptyTransformation.
    * @param qtableID
    *   the table identifier

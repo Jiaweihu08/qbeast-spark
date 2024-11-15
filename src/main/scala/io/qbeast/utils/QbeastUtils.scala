@@ -58,7 +58,8 @@ object QbeastUtils extends Logging {
       .as[String]
       .collect()
 
-    log.info(s"String Quantiles for column $columnName: $quantiles")
+    log.info(
+      s"String Quantiles for column $columnName: ${quantiles.mkString("Array(", ", ", ")")}")
     quantiles.map(string => s"'$string'")
 
   }
@@ -87,9 +88,9 @@ object QbeastUtils extends Logging {
    *
    * For example:
    *
-   * val qbeastTable = QbeastTable.forPath(spark, "path")
+   * val qt = QbeastTable.forPath(spark, "path")
    *
-   * val quantiles = qbeastTable.computeQuantilesForColumn(df, "column")
+   * val quantiles = qt.computeQuantilesForColumn(df, "column")
    *
    * df.write.format("qbeast") .option("columnsToIndex","column:quantiles")
    * .option("columnStats",s"""{"column_quantiles":quantiles}""").save()

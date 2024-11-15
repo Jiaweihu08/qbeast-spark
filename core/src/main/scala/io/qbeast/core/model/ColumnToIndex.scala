@@ -46,6 +46,7 @@ object ColumnToIndex {
   /**
    * Creates an IndexedColumn from a string and schema.
    * @param columnSpec
+   *   The string representation of the column, with an optional transformer type.
    * @return
    */
   def apply(columnSpec: String): ColumnToIndex = {
