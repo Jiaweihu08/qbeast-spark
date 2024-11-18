@@ -46,22 +46,12 @@ object SparkOTreeManager extends IndexManager with Serializable with Logging {
           isOptimizeOperation = false)
       return (data, emptyTableChanges)
     }
-
-    // Begin Indexing
-    logTrace(s"Begin: Index with revision ${indexStatus.revision}")
-    // Analyze the data and compute weight and estimated weight map of the result
-    val (weightedDataFrame, tc) =
-      DoublePassOTreeDataAnalyzer.analyzeAppend(data, indexStatus)
-
+    // Add weight column, analyze the data, compute cube domains, and estimate cube max weights
+    val (weightedDataFrame, tc) = DoublePassOTreeDataAnalyzer.analyzeAppend(data, indexStatus)
+    // Add cube information to the dataframe. The following will not be executed until an action is called
     val pointWeightIndexer = new SparkPointWeightIndexer(tc)
-
-    // Add cube and state information to the dataframe
-    val indexedDataFrame =
-      weightedDataFrame.transform(pointWeightIndexer.buildIndex)
-
-    val result = (indexedDataFrame, tc)
-    logTrace(s"End: Index with revision ${indexStatus.revision}")
-    result
+    val indexedDataFrame = weightedDataFrame.transform(pointWeightIndexer.buildIndex)
+    (indexedDataFrame, tc)
   }
 
 }
