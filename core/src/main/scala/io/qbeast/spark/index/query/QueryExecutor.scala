@@ -106,38 +106,23 @@ class QueryExecutor(querySpecBuilder: QuerySpecBuilder, qbeastSnapshot: QbeastSn
       // 1. the cube itself
       // 2. one of the cube's children
       // 3. this currentCube's sibling or their subtree
-      // 4. empty, the currentCube is the right-most cube in the tree and it is not in cubesStatuses
+      // 4. empty, the currentCube is the right-most cube in the tree, and it is not in cubesStatuses
       if (cubeIter.hasNext) { // cases 1 to 3
         cubeIter.next() match {
-          case (cube, CubeStatus(_, maxWeight, _, _, _)) if cube == currentCube => // Case 1
-            if (querySpec.weightRange.to <= maxWeight) {
-              // cube maxWeight is larger than or equal to the sample fraction (weightRange.to),
-              // that currentCube is the last cube to visit from the current branch - all blocks
-              // are to be retrieved and no more cubes from the branch should be visited.
-              outputCubeIds += cube
-            } else {
-              // Otherwise,
-              // 1. if the currentCube is REPLICATED, we skip the cube
-              // 2. if the state is ANNOUNCED, ignore the After Announcement elements
-              // 3. if FLOODED, retrieve all files from the cube
-              val isReplicated = indexStatus.replicatedSet.contains(cube)
-
-              if (!isReplicated) {
-                outputCubeIds += cube
-              }
-              val nextLevel = cube.children
-                .filter(querySpec.querySpace.intersectsWith)
+          case (cube, CubeStatus(_, maxWeight, _, _)) if cube == currentCube => // Case 1
+            outputCubeIds += cube
+            if (querySpec.weightRange.to > maxWeight) {
+              // The target fraction is larger than the current cube maxWeight(weightRange.to).
+              // The currentCube is not the last cube to visit from the current branch - all blocks
+              // are to be retrieved and child cubes are to be examined as well.
+              val nextLevel = cube.children.filter(querySpec.querySpace.intersectsWith)
               stack.pushAll(nextLevel)
-
             }
-
           case (cube, _) if currentCube.isAncestorOf(cube) => // Case 2
             // cube is a descendant of currentCube, and currentCube is missing.
             // We proceed navigating the subtree.
-            val nextLevel = currentCube.children
-              .filter(querySpec.querySpace.intersectsWith)
+            val nextLevel = currentCube.children.filter(querySpec.querySpace.intersectsWith)
             stack.pushAll(nextLevel)
-
           case _ => // Case 3
         }
       }

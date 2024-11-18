@@ -15,8 +15,6 @@
  */
 package io.qbeast.context
 
-import io.qbeast.core.keeper.Keeper
-import io.qbeast.core.keeper.LocalKeeper
 import io.qbeast.core.model._
 import io.qbeast.spark.delta.DeltaMetadataManager
 import io.qbeast.spark.delta.DeltaRollupDataWriter
@@ -45,14 +43,6 @@ trait QbeastContext {
   def config: SparkConf
 
   /**
-   * Returns the keeper.
-   *
-   * @return
-   *   the keeper
-   */
-  def keeper: Keeper
-
-  /**
    * Returns the IndexedTableFactory instance.
    *
    * @return
@@ -62,12 +52,12 @@ trait QbeastContext {
 }
 
 /**
- * Qbeast context companion object. <p> This object implements QbeastContext to be the single
- * instance used by the objects managed by Spark. By default it creates an internal managed Qbeast
- * context instance which is tired to the current Spark session and is released when the session
- * is closed. It is also possible to specify a custom unmanaged Qbeast context with #setUnmanaged
- * method which shadows the default one. Such an unmanaged context is not released with the Spark
- * session and should be used in testing scenarios only. To restore the default behavior use the
+ * Qbeast context companion object. This object implements QbeastContext to be the single instance
+ * used by the objects managed by Spark. By default, it creates an internal managed Qbeast context
+ * instance which is tied to the current Spark session and is released when the session is closed.
+ * It is also possible to specify a custom unmanaged Qbeast context with #setUnmanaged method
+ * which shadows the default one. Such an unmanaged context is not released with the Spark session
+ * and should be used in testing scenarios only. To restore the default behavior use the
  * #unsetUnmanaged method.
  */
 object QbeastContext extends QbeastContext with QbeastCoreContext {
@@ -77,8 +67,6 @@ object QbeastContext extends QbeastContext with QbeastCoreContext {
   // Override methods from QbeastContext
 
   override def config: SparkConf = current.config
-
-  override def keeper: Keeper = current.keeper
 
   override def indexedTableFactory: IndexedTableFactory = current.indexedTableFactory
 
@@ -132,22 +120,12 @@ object QbeastContext extends QbeastContext with QbeastCoreContext {
 
   private def createManaged(): QbeastContext = {
     val config = SparkSession.active.sparkContext.getConf
-    val keeper = createKeeper(config)
-    val indexedTableFactory =
-      createIndexedTableFactory(keeper)
-    new QbeastContextImpl(config, keeper, indexedTableFactory)
+    val indexedTableFactory = createIndexedTableFactory()
+    new QbeastContextImpl(config, indexedTableFactory)
   }
 
-  private def createKeeper(config: SparkConf): Keeper = {
-    val configKeeper = config.getAll.filter(_._1.startsWith("spark.qbeast.keeper")).toMap
-    if (configKeeper.isEmpty) {
-      LocalKeeper
-    } else Keeper(configKeeper)
-  }
-
-  private def createIndexedTableFactory(keeper: Keeper): IndexedTableFactory =
+  private def createIndexedTableFactory(): IndexedTableFactory =
     new IndexedTableFactoryImpl(
-      keeper,
       indexManager,
       metadataManager,
       dataWriter,
@@ -156,7 +134,6 @@ object QbeastContext extends QbeastContext with QbeastCoreContext {
       columnSelector)
 
   private def destroyManaged(): Unit = this.synchronized {
-    managedOption.foreach(_.keeper.stop())
     managedOption = None
   }
 
@@ -172,8 +149,5 @@ object QbeastContext extends QbeastContext with QbeastCoreContext {
 /**
  * Simple implementation of QbeastContext
  */
-class QbeastContextImpl(
-    val config: SparkConf,
-    val keeper: Keeper,
-    val indexedTableFactory: IndexedTableFactory)
+class QbeastContextImpl(val config: SparkConf, val indexedTableFactory: IndexedTableFactory)
     extends QbeastContext {}

@@ -16,7 +16,6 @@
 package io.qbeast.spark.index
 
 import io.qbeast.core.model._
-import io.qbeast.IISeq
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.DataFrame
 
@@ -54,7 +53,7 @@ object SparkOTreeManager extends IndexManager with Serializable with Logging {
     val (weightedDataFrame, tc) =
       DoublePassOTreeDataAnalyzer.analyzeAppend(data, indexStatus)
 
-    val pointWeightIndexer = new SparkPointWeightIndexer(tc, isReplication)
+    val pointWeightIndexer = new SparkPointWeightIndexer(tc)
 
     // Add cube and state information to the dataframe
     val indexedDataFrame =

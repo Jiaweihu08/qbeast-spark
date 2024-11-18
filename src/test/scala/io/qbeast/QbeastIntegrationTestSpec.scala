@@ -18,8 +18,6 @@ package io.qbeast
 import com.github.mrpowers.spark.fast.tests.DatasetComparer
 import io.qbeast.context.QbeastContext
 import io.qbeast.context.QbeastContextImpl
-import io.qbeast.core.keeper.Keeper
-import io.qbeast.core.keeper.LocalKeeper
 import io.qbeast.core.model.IndexManager
 import io.qbeast.core.model.QTableID
 import io.qbeast.core.model.QbeastSnapshot
@@ -88,7 +86,6 @@ trait QbeastIntegrationTestSpec extends AnyFlatSpec with Matchers with DatasetCo
    *   the configuration
    * @param testCode
    *   the code to run within the spark session
-   * @tparam T
    * @return
    */
   def withExtendedSpark[T](sparkConf: SparkConf = new SparkConf())(
@@ -115,7 +112,6 @@ trait QbeastIntegrationTestSpec extends AnyFlatSpec with Matchers with DatasetCo
    * This function is used to create a spark session
    * @param testCode
    *   the code to test within the spark session
-   * @tparam T
    * @return
    */
   def withSpark[T](testCode: SparkSession => T): T = {
@@ -126,7 +122,7 @@ trait QbeastIntegrationTestSpec extends AnyFlatSpec with Matchers with DatasetCo
    * Runs code with a Temporary Directory. After execution, the content of the directory is
    * deleted.
    * @param testCode
-   * @tparam T
+   *   the code to run
    * @return
    */
   def withTmpDir[T](testCode: String => T): T = {
@@ -147,27 +143,21 @@ trait QbeastIntegrationTestSpec extends AnyFlatSpec with Matchers with DatasetCo
    * Runs a given test code with a QbeastContext instance. The specified Keeper instance is used
    * to customize the QbeastContext.
    *
-   * @param keeper
-   *   the keeper
    * @param testCode
-   *   the test code
-   * @tparam T
-   *   the test result type
+   *   the test code to run
    * @return
    *   the test result
    */
-  def withQbeastAndSparkContext[T](keeper: Keeper = LocalKeeper)(
-      testCode: SparkSession => T): T = {
+  def withQbeastAndSparkContext[T]()(testCode: SparkSession => T): T = {
     withSpark { spark =>
       val indexedTableFactory = new IndexedTableFactoryImpl(
-        keeper,
         SparkOTreeManager,
         DeltaMetadataManager,
         DeltaRollupDataWriter,
         DeltaStagingDataManagerFactory,
         SparkRevisionFactory,
         SparkColumnsToIndexSelector)
-      val context = new QbeastContextImpl(spark.sparkContext.getConf, keeper, indexedTableFactory)
+      val context = new QbeastContextImpl(spark.sparkContext.getConf, indexedTableFactory)
       try {
         QbeastContext.setUnmanaged(context)
         testCode(spark)
@@ -180,7 +170,7 @@ trait QbeastIntegrationTestSpec extends AnyFlatSpec with Matchers with DatasetCo
   /**
    * Runs code with QbeastContext and a Temporary Directory.
    * @param testCode
-   * @tparam T
+   *   the code to run
    * @return
    */
 
@@ -190,8 +180,7 @@ trait QbeastIntegrationTestSpec extends AnyFlatSpec with Matchers with DatasetCo
   /**
    * Runs code with Warehouse/Catalog extensions
    * @param testCode
-   *   the code to reproduce
-   * @tparam T
+   *   the code to run
    * @return
    */
   def withQbeastContextSparkAndTmpWarehouse[T](testCode: (SparkSession, String) => T): T =
@@ -203,7 +192,7 @@ trait QbeastIntegrationTestSpec extends AnyFlatSpec with Matchers with DatasetCo
   /**
    * Runs code with OTreeAlgorithm configuration
    * @param code
-   * @tparam T
+   *   the code to run
    * @return
    */
   def withOTreeAlgorithm[T](code: IndexManager => T): T = {

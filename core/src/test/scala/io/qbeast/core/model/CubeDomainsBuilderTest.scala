@@ -47,7 +47,6 @@ class CubeDomainsBuilderTest extends AnyFlatSpec with Matchers with PrivateMetho
     // The default setting creates a groupCubeSize of 40
     CubeDomainsBuilder(
       existingCubeWeights,
-      replicatedOrAnnouncedSet,
       desiredCubeSize,
       numPartitions,
       elementCount,
@@ -77,7 +76,7 @@ class CubeDomainsBuilderTest extends AnyFlatSpec with Matchers with PrivateMetho
     // Cube -> (NormalizedWeight, cubeSize)
     val wts = builder invokePrivate computeWeightsAndCubeSizes()
 
-    // Inner cubes are full with gcs elements each, the remaining is stored in the leaf cube
+    // Inner cubes are full, with gcs elements each, the remaining is stored in the leaf cube
     wts.mapValues(_.treeSize).toSeq.sortBy(_._1).map(_._2) shouldBe Seq(40d, 40d, 20d)
   }
 

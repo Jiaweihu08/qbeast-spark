@@ -17,7 +17,7 @@ package io.qbeast.spark.index
 
 import io.qbeast.context.QbeastContext
 import io.qbeast.core.model._
-import io.qbeast.core.model.BroadcastedTableChanges
+import io.qbeast.core.model.BroadcastTableChanges
 import io.qbeast.spark.internal.QbeastOptions
 import io.qbeast.QbeastIntegrationTestSpec
 import io.qbeast.TestClasses.Client3
@@ -54,85 +54,66 @@ class IndexTest
 
   "Indexing method" should "respect the size of the data" in withSpark { spark =>
     withOTreeAlgorithm { oTreeAlgorithm =>
-      {
-        val df = createDF(spark)
-        val rev =
-          SparkRevisionFactory.createNewRevision(QTableID("test"), df.schema, qbeastOptions)
-
-        val (indexed, _) = oTreeAlgorithm.index(df, IndexStatus(rev))
-
-        checkDFSize(indexed, df)
-      }
+      val df = createDF(spark)
+      val rev =
+        SparkRevisionFactory.createNewRevision(QTableID("test"), df.schema, qbeastOptions)
+      val (indexed, _) = oTreeAlgorithm.index(df, IndexStatus(rev))
+      checkDFSize(indexed, df)
     }
   }
 
   it should "not miss any cube" in withSpark { spark =>
     withOTreeAlgorithm { oTreeAlgorithm =>
-      {
-        val df = createDF(spark)
-        val rev =
-          SparkRevisionFactory.createNewRevision(QTableID("test"), df.schema, qbeastOptions)
-
-        val (_, tc: BroadcastedTableChanges) = oTreeAlgorithm.index(df, IndexStatus(rev))
-
-        checkCubes(tc.cubeWeightsBroadcast.value)
-      }
+      val df = createDF(spark)
+      val rev =
+        SparkRevisionFactory.createNewRevision(QTableID("test"), df.schema, qbeastOptions)
+      val (_, tc: BroadcastTableChanges) = oTreeAlgorithm.index(df, IndexStatus(rev))
+      checkCubes(tc.cubeWeightsBroadcast.value)
     }
   }
 
   it should "respect the weight of the fathers" in withSpark { spark =>
     withOTreeAlgorithm { oTreeAlgorithm =>
-      {
-        val df = createDF(spark)
-        val rev =
-          SparkRevisionFactory.createNewRevision(QTableID("test"), df.schema, qbeastOptions)
-
-        val (_, tc: BroadcastedTableChanges) = oTreeAlgorithm.index(df, IndexStatus(rev))
-
-        checkWeightsIncrement(tc.cubeWeightsBroadcast.value)
-      }
+      val df = createDF(spark)
+      val rev =
+        SparkRevisionFactory.createNewRevision(QTableID("test"), df.schema, qbeastOptions)
+      val (_, tc: BroadcastTableChanges) = oTreeAlgorithm.index(df, IndexStatus(rev))
+      checkWeightsIncrement(tc.cubeWeightsBroadcast.value)
     }
   }
 
   it should "add only leaves to indexed data" in withSpark { spark =>
     withOTreeAlgorithm { oTreeAlgorithm =>
-      {
-        val df = createDF(spark)
-        val rev =
-          SparkRevisionFactory.createNewRevision(QTableID("test"), df.schema, qbeastOptions)
-
-        val (indexed, tc: BroadcastedTableChanges) = oTreeAlgorithm.index(df, IndexStatus(rev))
-
-        checkCubesOnData(tc.cubeWeightsBroadcast.value, indexed, dimensionCount = 2)
-      }
+      val df = createDF(spark)
+      val rev =
+        SparkRevisionFactory.createNewRevision(QTableID("test"), df.schema, qbeastOptions)
+      val (indexed, tc: BroadcastTableChanges) = oTreeAlgorithm.index(df, IndexStatus(rev))
+      checkCubesOnData(tc.cubeWeightsBroadcast.value, indexed, dimensionCount = 2)
     }
   }
 
   it should "work with real data" in withSpark { spark =>
     withOTreeAlgorithm { oTreeAlgorithm =>
-      {
-        val inputPath = "src/test/resources/"
-        val file1 = "ecommerce100K_2019_Oct.csv"
-        val df = spark.read
-          .format("csv")
-          .option("header", "true")
-          .option("inferSchema", "true")
-          .load(inputPath + file1)
-          .distinct()
+      val inputPath = "src/test/resources/"
+      val file1 = "ecommerce100K_2019_Oct.csv"
+      val df = spark.read
+        .format("csv")
+        .option("header", "true")
+        .option("inferSchema", "true")
+        .load(inputPath + file1)
+        .distinct()
 
-        val rev = SparkRevisionFactory.createNewRevision(
-          QTableID("test"),
-          df.schema,
-          QbeastOptions(Map("columnsToIndex" -> "user_id,product_id", "cubeSize" -> "10000")))
-        val (indexed, tc: BroadcastedTableChanges) = oTreeAlgorithm.index(df, IndexStatus(rev))
-        val weightMap = tc.cubeWeightsBroadcast.value
+      val rev = SparkRevisionFactory.createNewRevision(
+        QTableID("test"),
+        df.schema,
+        QbeastOptions(Map("columnsToIndex" -> "user_id,product_id", "cubeSize" -> "10000")))
+      val (indexed, tc: BroadcastTableChanges) = oTreeAlgorithm.index(df, IndexStatus(rev))
+      val weightMap = tc.cubeWeightsBroadcast.value
 
-        checkDFSize(indexed, df)
-        checkCubes(weightMap)
-        checkWeightsIncrement(weightMap)
-        checkCubesOnData(weightMap, indexed, 2)
-
-      }
+      checkDFSize(indexed, df)
+      checkCubes(weightMap)
+      checkWeightsIncrement(weightMap)
+      checkCubesOnData(weightMap, indexed, 2)
     }
   }
 
@@ -154,7 +135,7 @@ class IndexTest
           .withColumn("age", (col("age") * offset).cast(IntegerType))
           .withColumn("val2", (col("val2") * offset).cast(LongType))
 
-        val (indexed, tc: BroadcastedTableChanges) =
+        val (indexed, tc: BroadcastTableChanges) =
           oTreeAlgorithm.index(appendData, qbeastSnapshot.loadLatestIndexStatus)
         val weightMap = tc.cubeWeightsBroadcast.value
 
@@ -239,7 +220,7 @@ class IndexTest
         df.schema,
         QbeastOptions(Map("columnsToIndex" -> "age,val2", "cubeSize" -> smallCubeSize.toString)))
 
-      val (indexed, tc: BroadcastedTableChanges) = oTreeAlgorithm.index(df, IndexStatus(rev))
+      val (indexed, tc: BroadcastTableChanges) = oTreeAlgorithm.index(df, IndexStatus(rev))
       val weightMap = tc.cubeWeightsBroadcast.value
 
       checkDFSize(indexed, df)
@@ -263,7 +244,7 @@ class IndexTest
         .save(tmpDir)
       val appendSize = 10
       val numAppends = 10
-      (1 to numAppends).foreach { i =>
+      (1 to numAppends).foreach { _ =>
         val df = spark.range(offset, offset + appendSize).toDF("id")
         df.write.mode("append").format("qbeast").save(tmpDir)
         offset += appendSize

@@ -232,7 +232,6 @@ class DoublePassOTreeDataAnalyzerTest extends QbeastIntegrationTestSpec {
             numElements,
             revisionToUse,
             indexStatus,
-            isReplication = false,
             isNewRevision = true))
 
     val cubeCount = inputDataPartitionCubeDomains
@@ -381,11 +380,7 @@ class DoublePassOTreeDataAnalyzerTest extends QbeastIntegrationTestSpec {
 
     // Populate NormalizedWeight level-wise from top to bottom
     val updatedCubeWeights: Map[CubeId, Weight] =
-      estimateUpdatedCubeWeights(
-        updatedCubeDomains.toSeq,
-        indexStatus,
-        revisionToUse,
-        isNewRevision = true)
+      estimateUpdatedCubeWeights(revisionToUse, updatedCubeDomains.toSeq)
 
     // Cubes with a weight lager than 1d should not have children
     val leafCubesByWeight = updatedCubeWeights.filter(cw => cw._2.fraction >= 1d).keys

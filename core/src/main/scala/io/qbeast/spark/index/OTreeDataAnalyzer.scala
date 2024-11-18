@@ -18,7 +18,6 @@ package io.qbeast.spark.index
 import io.qbeast.core.model._
 import io.qbeast.core.transform.Transformer
 import io.qbeast.spark.index.QbeastColumns.cubeColumnName
-import io.qbeast.spark.index.QbeastColumns.cubeToReplicateColumnName
 import io.qbeast.spark.index.QbeastColumns.weightColumnName
 import io.qbeast.spark.internal.QbeastFunctions.qbeastHash
 import io.qbeast.IISeq

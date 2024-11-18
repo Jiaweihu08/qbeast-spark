@@ -427,7 +427,7 @@ private[table] class IndexedTableImpl(
         case _: ConcurrentModificationException =>
           // Trying one more time if the conflict is solvable
           tries -= 1
-        case e => throw e
+        case e: Throwable => throw e
       }
 
     }

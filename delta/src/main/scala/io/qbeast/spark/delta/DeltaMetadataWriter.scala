@@ -15,18 +15,10 @@
  */
 package io.qbeast.spark.delta
 
-import io.qbeast.core.model.DeleteFile
-import io.qbeast.core.model.IndexFile
-import io.qbeast.core.model.PreCommitHook
+import io.qbeast.core.model._
 import io.qbeast.core.model.PreCommitHook.PreCommitHookOutput
-import io.qbeast.core.model.QTableID
-import io.qbeast.core.model.QbeastFile
-import io.qbeast.core.model.QbeastHookLoader
-import io.qbeast.core.model.RevisionID
-import io.qbeast.core.model.TableChanges
 import io.qbeast.spark.internal.QbeastOptions
 import io.qbeast.spark.utils.QbeastExceptionMessages.partitionedTableExceptionMsg
-import io.qbeast.spark.utils.TagColumns
 import io.qbeast.spark.writer.StatsTracker.registerStatsTrackers
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.delta.actions._
@@ -37,7 +29,6 @@ import org.apache.spark.sql.delta.DeltaOptions
 import org.apache.spark.sql.delta.OptimisticTransaction
 import org.apache.spark.sql.execution.datasources.BasicWriteJobStatsTracker
 import org.apache.spark.sql.execution.datasources.WriteJobStatsTracker
-import org.apache.spark.sql.functions.lit
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.AnalysisExceptionFactory
 import org.apache.spark.sql.SaveMode
@@ -217,16 +208,6 @@ private[delta] case class DeltaMetadataWriter(
       txn.updateMetadata(updatedMetadata)
       txn.commit(Seq.empty, op)
     }
-  }
-
-  private def updateTransactionVersion(
-      txn: OptimisticTransaction,
-      revisionID: RevisionID): SetTransaction = {
-    val transactionID = s"qbeast.${tableID.id}.$revisionID"
-    val startingTnx = txn.txnVersion(transactionID)
-    val newTransaction = startingTnx + 1
-
-    SetTransaction(transactionID, newTransaction, Some(System.currentTimeMillis()))
   }
 
   /**

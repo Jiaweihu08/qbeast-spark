@@ -1,5 +1,6 @@
 package io.qbeast.core.model
 
+import io.qbeast.core.model.ColumnToIndexUtils.SpecExtractor
 import org.apache.spark.sql.types.DoubleType
 import org.apache.spark.sql.types.FloatType
 import org.apache.spark.sql.types.LongType
@@ -28,9 +29,6 @@ class ColumnToIndexUtilsTest extends AnyFlatSpec with Matchers {
   }
 
   it should "should extract correctly the type" in {
-
-    import ColumnToIndexUtils.SpecExtractor
-
     "column:LinearTransformer" match {
       case SpecExtractor(column, transformer) =>
         column shouldBe "column"
@@ -39,10 +37,8 @@ class ColumnToIndexUtilsTest extends AnyFlatSpec with Matchers {
     }
 
     "column" match {
-      case SpecExtractor(column, transformer) =>
-        fail("It shouldn't be here")
-      case column =>
-        column shouldBe "column"
+      case SpecExtractor(_, _) => fail("It shouldn't be here")
+      case column => column shouldBe "column"
     }
   }
 
