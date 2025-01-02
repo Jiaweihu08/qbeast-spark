@@ -119,11 +119,7 @@ object DoublePassOTreeDataAnalyzer
       // The result is a Dataset of (CubeId, domain) pairs from all partitions
       val inputPartitionCubeDomains =
         weightedDataFrame.transform(
-          computePartitionCubeDomains(
-            numElements: Long,
-            revision: Revision,
-            indexStatus: IndexStatus,
-            isNewRevision))
+          computePartitionCubeDomains(numElements, revision, indexStatus, isNewRevision))
 
       // Merge the cube domains from all partitions
       import weightedDataFrame.sparkSession.implicits._
@@ -154,61 +150,43 @@ object DoublePassOTreeDataAnalyzer
   }
 
   /**
-   * Avoid computing the weight for the current cube if any of its ancestors is leaf.
+   * Avoid computing the weight for an input CubeId if any of its ancestors is leaf.
    * @param cube
-   *   the current CubeId whose NormalizedWeight is of our interest
-   * @param cubeNormalizedWeights
-   *   existing NormalizedWeights
+   *   the input CubeId
+   * @param normalizedWeights
+   *   computed NormalizedWeights
    * @return
    */
-  private[index] def skipCube(
+  private[index] def hasLeafAncestor(
       cube: CubeId,
-      cubeNormalizedWeights: Map[CubeId, NormalizedWeight]): Boolean = {
-    if (cube.isRoot) false // should always compute weight for the root
-    else if (!cubeNormalizedWeights.contains(cube.parent.get)) true
-    else cubeNormalizedWeights(cube.parent.get) >= 1d
+      normalizedWeights: Map[CubeId, NormalizedWeight]): Boolean = {
+    if (cube.isRoot) false
+    else if (!normalizedWeights.contains(cube.parent.get)) true
+    else normalizedWeights(cube.parent.get) >= 1d
   }
 
   /**
    * Populate updated NormalizedWeights in a top-down fashion using the updated cube domains: Wc =
-   * Wpc + desiredCubeSize / domain. When treeSize <= desiredCubeSize, we force a leaf.
+   * Wpc + desiredCubeSize / domain.
    * @param updatedCubeDomains
-   *   updated cube domain
-   * @param indexStatus
-   *   existing index metadata
+   *   updated cube domains
    * @param revisionToUse
    *   the revision to use
-   * @param isNewRevision
-   *   whether the current append is triggering the creation of a new revision
    * @return
    */
   private[index] def estimateUpdatedCubeWeights(
       updatedCubeDomains: Seq[(CubeId, Double)],
-      indexStatus: IndexStatus,
-      revisionToUse: Revision,
-      isNewRevision: Boolean): Map[CubeId, Weight] = {
-    var cubeNormalizedWeights = Map.empty[CubeId, NormalizedWeight]
+      revisionToUse: Revision): Map[CubeId, Weight] = {
+    var cubeMaxWeights = Map.empty[CubeId, NormalizedWeight]
     val desiredCubeSize = revisionToUse.desiredCubeSize
-    val levelCubes = updatedCubeDomains.groupBy(_._1.depth)
-    val (minLevel, maxLevel) = (levelCubes.keys.min, levelCubes.keys.max)
-    (minLevel to maxLevel).foreach { level =>
-      levelCubes(level)
-        .filterNot(cd => skipCube(cd._1, cubeNormalizedWeights))
-        .foreach { case (cube, domain) =>
-          val parentWeight = cube.parent match {
-            case Some(parent) => cubeNormalizedWeights(parent)
-            case None => 0d
-          }
-          val treeSize = domain * (1d - parentWeight).max(1d)
-          val normalizedWeight =
-            if (treeSize <= desiredCubeSize) 1d // force leaf
-            else parentWeight + NormalizedWeight(desiredCubeSize, domain.toLong)
-          cubeNormalizedWeights += (cube -> normalizedWeight)
-        }
+    updatedCubeDomains.sorted.foreach { case (cube, domain) =>
+      if (!hasLeafAncestor(cube, cubeMaxWeights)) {
+        val minWeight = if (cube.isRoot) 0d else cubeMaxWeights(cube.parent.get)
+        val maxWeight = minWeight + NormalizedWeight(desiredCubeSize, domain.toLong)
+        cubeMaxWeights += (cube -> maxWeight)
+      }
     }
-    cubeNormalizedWeights.map { case (cubeId, nw) =>
-      (cubeId, NormalizedWeight.toWeight(nw))
-    }
+    cubeMaxWeights.map { case (cubeId, nw) => (cubeId, NormalizedWeight.toWeight(nw)) }
   }
 
   override def analyze(
@@ -245,11 +223,7 @@ object DoublePassOTreeDataAnalyzer
     // Populate NormalizedWeight level-wise from top to bottom
     logDebug(s"Estimating the updated cube weights")
     val updatedCubeWeights: Map[CubeId, Weight] =
-      estimateUpdatedCubeWeights(
-        updatedCubeDomains.toSeq,
-        indexStatus,
-        revisionToUse,
-        isNewRevision)
+      estimateUpdatedCubeWeights(updatedCubeDomains.toSeq, revisionToUse)
 
     // Compute the number of elements in each block for the current append
     logDebug(s"Estimating the number of elements in each block")

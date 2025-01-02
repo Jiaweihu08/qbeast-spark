@@ -157,36 +157,22 @@ class CubeDomainsBuilder protected (
       weightsAndTreeSizes: Map[CubeId, WeightAndTreeSize]): Seq[CubeDomain] = {
     val cubeDomainBuilder = Seq.newBuilder[CubeDomain]
     cubeDomainBuilder.sizeHint(weightsAndTreeSizes.size)
-
-    // Compute cube domain from bottom-up
-    val levelCubes = weightsAndTreeSizes.keys.groupBy(_.depth)
-    val minLevel = levelCubes.keys.min
-    val maxLevel = levelCubes.keys.max
-
-    (maxLevel until minLevel by -1) foreach { level =>
-      levelCubes(level).foreach(cube => {
-        cube.parent match {
-          case Some(parent) =>
-            val cubeTreeSize = weightsAndTreeSizes(cube).treeSize
-            val parentInfo = weightsAndTreeSizes(parent)
-
-            // Compute cube domain
-            val domain = cubeTreeSize / (1d - parentInfo.weight)
-            cubeDomainBuilder += CubeDomain(cube.bytes, domain)
-
-            // Update parent treeSize
-            parentInfo.treeSize += cubeTreeSize
-          case None =>
-        }
-      })
+    // Compute cube domains from bottom-up as we update parent tree sizes
+    weightsAndTreeSizes.keys.toSeq.sortBy(-_.depth).foreach { cube =>
+      val cubeTreeSize = weightsAndTreeSizes(cube).treeSize
+      if (cube.isRoot) {
+        // Root domain is the root tree size
+        cubeDomainBuilder += CubeDomain(cube.bytes, cubeTreeSize)
+      } else {
+        val parentInfo = weightsAndTreeSizes(cube.parent.get)
+        // Compute cube domain
+        val minWeight = parentInfo.weight
+        val domain = cubeTreeSize / (1d - minWeight)
+        cubeDomainBuilder += CubeDomain(cube.bytes, domain)
+        // Update parent treeSize
+        parentInfo.treeSize += cubeTreeSize
+      }
     }
-
-    // Top level cube domain = treeSize
-    levelCubes(minLevel).foreach { cube =>
-      val domain = weightsAndTreeSizes(cube).treeSize
-      cubeDomainBuilder += CubeDomain(cube.bytes, domain)
-    }
-
     cubeDomainBuilder.result()
   }
 
@@ -194,7 +180,7 @@ class CubeDomainsBuilder protected (
 
 /**
  * Factory for WeightAndCount. The creation of which depends on whether the associated CubeId is
- * present in the existing index, if it's a inner or leaf cube.
+ * present in the existing index, if it's an inner or a leaf cube.
  *
  * @param existingCubeWeights
  *   Cube Weight of the existing index

@@ -44,19 +44,19 @@ class DoublePassOTreeDataAnalyzerTest
       .forall(c => checkDecreasingBranchDomain(c, domainMap, cubeDomain))
   }
 
-  "skipCube" should "not compute weight for descendents of leaf cubes" in {
+  "hasLeafAncestor" should "assess if a cube has leaf ancestor" in {
     val root = CubeId.root(2)
     val c1 = root.firstChild
     val c2 = c1.firstChild
     val c3 = c2.firstChild
 
-    skipCube(root, Map.empty) shouldBe false
+    hasLeafAncestor(root, Map.empty) shouldBe false
 
-    skipCube(c1, Map(root -> 0.9)) shouldBe false
+    hasLeafAncestor(c1, Map(root -> 0.9)) shouldBe false
 
-    skipCube(c2, Map(root -> 0.9, c1 -> 1d)) shouldBe true
+    hasLeafAncestor(c2, Map(root -> 0.9, c1 -> 1d)) shouldBe true
 
-    skipCube(c3, Map(root -> 0.9, c1 -> 1d)) shouldBe true
+    hasLeafAncestor(c3, Map(root -> 0.9, c1 -> 1d)) shouldBe true
   }
 
   "computePartitionCubeDomains" should "compute root for all partitions" in withSpark { spark =>
@@ -179,15 +179,12 @@ class DoublePassOTreeDataAnalyzerTest
 
       // Populate NormalizedWeight level-wise from top to bottom
       val updatedCubeWeights: Map[CubeId, Weight] =
-        estimateUpdatedCubeWeights(
-          updatedCubeDomains.toSeq,
-          indexStatus,
-          revisionToUse,
-          isNewRevision = true)
+        estimateUpdatedCubeWeights(updatedCubeDomains.toSeq, revisionToUse)
 
       // Cubes with a weight lager than 1d should not have children
-      val leafCubesByWeight = updatedCubeWeights.filter(cw => cw._2.fraction >= 1d).keys
-      leafCubesByWeight.exists(cube =>
+      val leafCubesByWeight = updatedCubeWeights.filter(cw => cw._2.fraction >= 1d)
+      leafCubesByWeight.mapValues(_.fraction).toSeq.sortBy(_._1).foreach(println)
+      leafCubesByWeight.keys.exists(cube =>
         cube.children.exists(updatedCubeWeights.contains)) shouldBe false
 
       // Test estimatedCubeWeights is monotonically increasing in all branches
