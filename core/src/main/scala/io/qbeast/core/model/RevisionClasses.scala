@@ -305,7 +305,7 @@ case class IndexStatus(
    * simply be the sum of that of its children. The output map contains the tree sizes of all
    * cubes with no broken branches.
    */
-  private def cubeTreeSizes(): Map[CubeId, Double] = {
+  private[model] def cubeTreeSizes(): Map[CubeId, Double] = {
     var treeSizes = cubeElementCounts().mapValues(_.toDouble)
     val cubes = new mutable.PriorityQueue()(Ordering.by[CubeId, Int](_.depth))
     cubesStatuses.keys.foreach(cubes.enqueue(_))
@@ -337,7 +337,7 @@ object CubeStatus {
       maxWeight: Weight,
       normalizedWeight: NormalizedWeight,
       blocks: IISeq[Block]): CubeStatus = {
-    new CubeStatus(cubeId, maxWeight, normalizedWeight, blocks.map(_.elementCount).sum)
+    CubeStatus(cubeId, maxWeight, normalizedWeight, blocks.map(_.elementCount).sum)
   }
 
 }
