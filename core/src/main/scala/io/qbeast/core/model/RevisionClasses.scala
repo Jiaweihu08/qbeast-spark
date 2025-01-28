@@ -24,7 +24,6 @@ import io.qbeast.core.transform.Transformer
 import io.qbeast.IISeq
 
 import scala.collection.immutable.SortedMap
-import scala.collection.mutable
 
 object QTableID {
 
@@ -266,67 +265,6 @@ case class IndexStatus(
 
   def cubeElementCounts(): Map[CubeId, Long] =
     cubesStatuses.map { case (cubeId, status) => cubeId -> status.elementCount }
-
-  /**
-   * Compute domain sizes for each cube from the index. The domain of a given cube c is computed
-   * as a fraction f of its parent domain, with f being the ratio between c's tree size and its
-   * parent's SUBTREE size. The output map contains the domain sizes of all cubes with no broken
-   * branches.
-   */
-  def cubeDomains(): Map[CubeId, Double] = {
-    val treeSizes = cubeTreeSizes()
-    val cubeDomains = mutable.Map.empty[CubeId, Double]
-    treeSizes.keys.toSeq.sorted.foreach { cube =>
-      if (cube.isRoot) {
-        // The root domain coincides with its tree size
-        cubeDomains += (cube -> treeSizes(cube))
-      }
-      // Compute the domain of the children
-      val children = cube.children.filter(treeSizes.contains).toSeq
-      if (children.nonEmpty) {
-        val cubeDomain = cubeDomains(cube)
-        val childTreeSizes = children.map(c => (c, treeSizes(c)))
-        val subtreeSize = childTreeSizes.map(_._2).sum
-        childTreeSizes.foreach { case (child, ts) =>
-          val f = ts / subtreeSize
-          val childDomain = f * cubeDomain
-          cubeDomains += (child -> childDomain)
-        }
-      }
-    }
-    cubeDomains.toMap
-  }
-
-  /**
-   * Compute the tree sizes for each cube in the index. The process starts from the leaves and
-   * goes up to the root, computing the tree size of each cube as the sum of the tree sizes of its
-   * children plus its own element counts. The tree size of a leaf is the number of elements in
-   * the cube. If a cube is not in the index, its element counts is 0, and its tree size will
-   * simply be the sum of that of its children. The output map contains the tree sizes of all
-   * cubes with no broken branches.
-   */
-  private[model] def cubeTreeSizes(): Map[CubeId, Double] = {
-    var treeSizes = cubeElementCounts().mapValues(_.toDouble)
-    val cubes = new mutable.PriorityQueue()(Ordering.by[CubeId, Int](_.depth))
-    cubesStatuses.keys.foreach(cubes.enqueue(_))
-    while (cubes.nonEmpty) {
-      val cube = cubes.dequeue()
-      val treeSize = treeSizes(cube)
-      if (!cube.isRoot) {
-        val parent = cube.parent.get
-        val updatedParentTreeSize =
-          if (treeSizes.contains(parent)) {
-            treeSizes(parent) + treeSize
-          } else {
-            // Add the tree size of the parent to the queue
-            cubes.enqueue(parent)
-            treeSize
-          }
-        treeSizes += (parent -> updatedParentTreeSize)
-      }
-    }
-    treeSizes
-  }
 
 }
 

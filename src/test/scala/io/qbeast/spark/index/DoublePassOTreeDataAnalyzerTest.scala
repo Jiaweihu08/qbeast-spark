@@ -44,21 +44,6 @@ class DoublePassOTreeDataAnalyzerTest
       .forall(c => checkDecreasingBranchDomain(c, domainMap, cubeDomain))
   }
 
-  "hasLeafAncestor" should "assess if a cube has leaf ancestor" in {
-    val root = CubeId.root(2)
-    val c1 = root.firstChild
-    val c2 = c1.firstChild
-    val c3 = c2.firstChild
-
-    hasLeafAncestor(root, Map.empty) shouldBe false
-
-    hasLeafAncestor(c1, Map(root -> 0.9)) shouldBe false
-
-    hasLeafAncestor(c2, Map(root -> 0.9, c1 -> 1d)) shouldBe true
-
-    hasLeafAncestor(c3, Map(root -> 0.9, c1 -> 1d)) shouldBe true
-  }
-
   "computePartitionCubeDomains" should "compute root for all partitions" in withSpark { spark =>
     import spark.implicits._
     // Repartition the data to make sure no empty partitions
@@ -72,7 +57,7 @@ class DoublePassOTreeDataAnalyzerTest
     val indexStatus = IndexStatus.empty(startingRevision)
     val (revisionChanges, numElements) =
       computeRevisionChanges(indexStatus.revision, options, data.toDF())
-    val (isNewRevision, revisionToUse) = revisionChanges match {
+    val (_, revisionToUse) = revisionChanges match {
       case None => (false, indexStatus.revision)
       case Some(revisionChange) => (true, revisionChange.createNewRevision)
     }
@@ -83,11 +68,7 @@ class DoublePassOTreeDataAnalyzerTest
     val inputDataPartitionCubeDomains: Dataset[CubeDomain] =
       weightedDataFrame
         .transform(
-          computePartitionCubeDomains(
-            numElements,
-            revisionToUse,
-            indexStatus,
-            isNewRevision = isNewRevision))
+          computePartitionCubeDomains(numElements, revisionToUse, Map.empty[CubeId, Weight]))
 
     val cubeCount = inputDataPartitionCubeDomains
       .groupBy("cubeBytes")
@@ -114,7 +95,7 @@ class DoublePassOTreeDataAnalyzerTest
       val indexStatus = IndexStatus.empty(startingRevision)
       val (revisionChanges, numElements) =
         computeRevisionChanges(indexStatus.revision, options, data.toDF())
-      val (isNewRevision, revisionToUse) = revisionChanges match {
+      val (_, revisionToUse) = revisionChanges match {
         case None => (false, indexStatus.revision)
         case Some(revisionChange) => (true, revisionChange.createNewRevision)
       }
@@ -126,11 +107,7 @@ class DoublePassOTreeDataAnalyzerTest
       val inputDataCubeDomains: Map[CubeId, Double] =
         weightedDataFrame
           .transform(
-            computeInputDataCubeDomains(
-              numElements,
-              revisionToUse,
-              indexStatus,
-              isNewRevision = isNewRevision))
+            computeInputDataCubeDomains(numElements, revisionToUse, Map.empty[CubeId, Weight]))
           .collect()
           .toMap
 
@@ -154,7 +131,7 @@ class DoublePassOTreeDataAnalyzerTest
       val indexStatus = IndexStatus.empty(startingRevision)
       val (revisionChanges, numElements) =
         computeRevisionChanges(indexStatus.revision, options, data.toDF())
-      val (isNewRevision, revisionToUse) = revisionChanges match {
+      val (_, revisionToUse) = revisionChanges match {
         case None => (false, indexStatus.revision)
         case Some(revisionChange) => (true, revisionChange.createNewRevision)
       }
@@ -165,25 +142,20 @@ class DoublePassOTreeDataAnalyzerTest
       val inputDataCubeDomains: Map[CubeId, Double] =
         weightedDataFrame
           .transform(
-            computeInputDataCubeDomains(
-              numElements,
-              revisionToUse,
-              indexStatus,
-              isNewRevision = isNewRevision))
+            computeInputDataCubeDomains(numElements, revisionToUse, Map.empty[CubeId, Weight]))
           .collect()
           .toMap
 
       // Merge globalCubeDomain with the existing cube domains
       val updatedCubeDomains: Map[CubeId, Double] =
-        computeUpdatedCubeDomains(inputDataCubeDomains, indexStatus, isNewRevision = true)
+        computeUpdatedCubeDomains(inputDataCubeDomains, Map.empty[CubeId, Double])
 
       // Populate NormalizedWeight level-wise from top to bottom
       val updatedCubeWeights: Map[CubeId, Weight] =
-        estimateUpdatedCubeWeights(updatedCubeDomains.toSeq, revisionToUse)
+        computeCubeMaxWeightsFromDomains(updatedCubeDomains, revisionToUse.desiredCubeSize)
 
       // Cubes with a weight lager than 1d should not have children
       val leafCubesByWeight = updatedCubeWeights.filter(cw => cw._2.fraction >= 1d)
-      leafCubesByWeight.mapValues(_.fraction).toSeq.sortBy(_._1).foreach(println)
       leafCubesByWeight.keys.exists(cube =>
         cube.children.exists(updatedCubeWeights.contains)) shouldBe false
 

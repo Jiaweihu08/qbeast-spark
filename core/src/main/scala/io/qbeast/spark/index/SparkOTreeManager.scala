@@ -24,7 +24,11 @@ import org.apache.spark.sql.DataFrame
 /**
  * Implementation of OTreeAlgorithm.
  */
-object SparkOTreeManager extends IndexManager with Serializable with Logging {
+object SparkOTreeManager
+    extends IndexManager
+    with DomainDrivenWeightEstimation
+    with Serializable
+    with Logging {
 
   /**
    * Builds an OTree index.
@@ -75,12 +79,14 @@ object SparkOTreeManager extends IndexManager with Serializable with Logging {
     logTrace(s"""Begin: Analyze Optimize for index with
                 |revision=$revision""".stripMargin.replaceAll("\n", " "))
 
+    // Compute cube max weights from the current index status
+    val cubeMaxWeights = computeCubeMaxWeightsFromIndexStatus(indexStatus)
     // Add a random weight column
     val weightedDataFrame = data.transform(addRandomWeight(revision))
     val tcForIndexing = BroadcastTableChanges(
       isNewRevision = false,
       revision,
-      spark.sparkContext.broadcast(indexStatus.cubeMaxWeights()),
+      spark.sparkContext.broadcast(cubeMaxWeights),
       spark.sparkContext.broadcast(Map.empty[CubeId, Long]))
 
     // Add cube column
